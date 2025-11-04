@@ -21,19 +21,19 @@ INSTALLED_APPS = [
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
-    'django.contrib.staticfiles',
+    'django.contrib.staticfiles', 
     # Third-party
     'rest_framework',
     'corsheaders',
     # Local apps
     'core',
-    'apps.accounts',
-    'apps.locations',
-    'apps.catalog',
-    'apps.inventory',
-    'apps.procurement',
-    'apps.settingsx',
-    'apps.governance',
+    'apps.customers',
+    'apps.sales',
+    'apps.transfers',
+    'apps.compliance',
+    'apps.reports',
+    'apps.notifications',
+    
 ]
 
 MIDDLEWARE = [
@@ -47,7 +47,7 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
-ROOT_URLCONF = 'django_postgres_backend.urls'
+ROOT_URLCONF = 'config.urls'
 
 TEMPLATES = [
     {
@@ -65,7 +65,7 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = 'django_postgres_backend.wsgi.application'
+WSGI_APPLICATION = 'config.wsgi.application'
 
 AUTH_PASSWORD_VALIDATORS = [
     {
@@ -94,10 +94,9 @@ USE_TZ = True
 
 STATIC_URL = '/static/'
 
-# CORS (development-friendly defaults)
+# CORS and DRF (Dev A parity)
 CORS_ALLOW_ALL_ORIGINS = True
 
-# DRF basic configuration
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework.authentication.SessionAuthentication',
