@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 from rest_framework import viewsets, filters, permissions
 from .models import Customer
 from .serializers import CustomerSerializer
@@ -9,3 +10,12 @@ class CustomerViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.AllowAny]
     filter_backends = [filters.SearchFilter]
     search_fields = ["name", "phone"]
+=======
+from rest_framework import viewsets
+from .models import Customer
+from .serializers import CustomerSerializer
+
+class CustomerViewSet(viewsets.ModelViewSet):
+    queryset = Customer.objects.all()
+    serializer_class = CustomerSerializer
+>>>>>>> b2b2647 (created customers)

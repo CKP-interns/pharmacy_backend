@@ -1,8 +1,16 @@
 from rest_framework.routers import DefaultRouter
 from .views import CustomerViewSet
+<<<<<<< HEAD
 from django.urls import path, include
 
 router = DefaultRouter()
 router.register("", CustomerViewSet, basename="customer")
 
 urlpatterns = [path("", include(router.urls))]
+=======
+
+router = DefaultRouter()
+router.register(r'', CustomerViewSet, basename='customer')
+
+urlpatterns = router.urls
+>>>>>>> b2b2647 (created customers)
