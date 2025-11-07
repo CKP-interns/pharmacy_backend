@@ -1,4 +1,4 @@
-<<<<<<< HEAD
+
 
 [
   {"model": "catalog.batchlot", "pk": 1, "fields": {
@@ -31,6 +31,4 @@
 ]
 
 
-=======
-[]
->>>>>>> b2b2647 (created customers)
+

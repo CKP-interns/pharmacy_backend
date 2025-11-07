@@ -1,7 +1,7 @@
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny
 from .models import TransferVoucher
 from .serializers import TransferVoucherSerializer
 from . import services
@@ -9,7 +9,7 @@ from . import services
 class TransferVoucherViewSet(viewsets.ModelViewSet):
     queryset = TransferVoucher.objects.all().select_related("from_location", "to_location")
     serializer_class = TransferVoucherSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [AllowAny]
 
     @action(detail=True, methods=["post"], url_path="post")
     def post_transfer(self, request, pk=None):
