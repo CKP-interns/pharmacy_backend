@@ -1,3 +1,5 @@
+
+
 [
   {"model": "catalog.batchlot", "pk": 1, "fields": {
     "product": 1,
@@ -27,3 +29,5 @@
     "rack_no": "C2"
   }}
 ]
+
+
