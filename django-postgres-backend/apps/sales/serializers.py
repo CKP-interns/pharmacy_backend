@@ -12,7 +12,7 @@ class SalesLineSerializer(serializers.ModelSerializer):
     class Meta:
         model = SalesLine
         fields = "__all__"
-        read_only_fields = ("line_total", "tax_amount")
+        read_only_fields = ("line_total", "tax_amount", "sale_invoice")
 
     def validate(self, data):
         prod = data.get("product")

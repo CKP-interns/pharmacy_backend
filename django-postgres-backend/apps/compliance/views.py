@@ -16,7 +16,7 @@ from .serializers import (
 class PrescriptionViewSet(viewsets.ModelViewSet):
     queryset = Prescription.objects.all()
     serializer_class = PrescriptionSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.AllowAny]
 
     @action(detail=True, methods=["post"], url_path="extend-validity")
     def extend_validity(self, request, pk=None):
@@ -29,13 +29,13 @@ class PrescriptionViewSet(viewsets.ModelViewSet):
 class H1RegisterEntryViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = H1RegisterEntry.objects.all()
     serializer_class = H1RegisterEntrySerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.AllowAny]
 
 
 class NDPSDailyEntryViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = NDPSDailyEntry.objects.all()
     serializer_class = NDPSDailyEntrySerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.AllowAny]
 
     @action(detail=False, methods=["post"], url_path="recompute")
     def recompute(self, request):
@@ -51,7 +51,7 @@ class NDPSDailyEntryViewSet(viewsets.ReadOnlyModelViewSet):
 class RecallEventViewSet(viewsets.ModelViewSet):
     queryset = RecallEvent.objects.all()
     serializer_class = RecallEventSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.AllowAny]
 
     @action(detail=True, methods=["post"], url_path="close")
     def close_recall(self, request, pk=None):
