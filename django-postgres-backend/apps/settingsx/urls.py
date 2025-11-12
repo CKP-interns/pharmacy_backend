@@ -2,8 +2,8 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import (
     HealthView, SettingsListCreateView, SettingsDetailView, BusinessProfileView,
-    SettingsGroupView, DocCounterViewSet, KVDetailView, DocCounterNextView,
-    PaymentMethodViewSet, PaymentTermViewSet, BackupRestoreView,
+    SettingsGroupView, SettingsGroupSaveView, DocCounterViewSet, KVDetailView, DocCounterNextView,
+    PaymentMethodViewSet, PaymentTermViewSet, BackupRestoreView, BackupCreateView,
 )
 
 
@@ -22,7 +22,9 @@ urlpatterns = [
     path('business-profile/', BusinessProfileView.as_view(), name='business-profile'),
     path('doc-counters/next/', DocCounterNextView.as_view(), name='doc-counters-next'),
     path('backup/restore/', BackupRestoreView.as_view(), name='backup-restore'),
+    path('backup/create/', BackupCreateView.as_view(), name='backup-create'),
     path('app/', SettingsGroupView.as_view(), name='settings-group'),
+    path('app/save', SettingsGroupSaveView.as_view(), name='settings-group-save'),
     path('', include(router.urls)),
 ]
 
