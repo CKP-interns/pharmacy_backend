@@ -30,6 +30,9 @@ class Command(BaseCommand):
             "ALERT_LOW_STOCK_DEFAULT": "50",
             "ALERT_EXPIRY_WARNING_DAYS": "60",
             "ALERT_EXPIRY_CRITICAL_DAYS": "30",
+            "ALERT_CHECK_FREQUENCY": "DAILY",  # DAILY|WEEKLY
+            "AUTO_REMOVE_EXPIRED": "MANUAL",    # MANUAL|AUTO
+            "OUT_OF_STOCK_ACTION": "NOTIFY_ONLY",  # NOTIFY_ONLY|BLOCK_SALE
             # Inventory/stock behavior
             "ALLOW_NEGATIVE_STOCK": "false",
             # Tax & Billing
@@ -53,6 +56,10 @@ class Command(BaseCommand):
             "SMTP_PORT": "587",
             "SMTP_USER": "",
             "SMTP_PASSWORD": "",
+            # Backups schedule (UI only; scheduling done externally)
+            "AUTO_BACKUP_ENABLED": "false",
+            "AUTO_BACKUP_FREQUENCY": "DAILY",  # DAILY|WEEKLY|MONTHLY
+            "AUTO_BACKUP_TIME": "02:00",
         }
         for k, v in defaults.items():
             SettingKV.objects.get_or_create(key=k, defaults=dict(value=v))

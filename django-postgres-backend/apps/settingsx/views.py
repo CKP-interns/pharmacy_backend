@@ -9,7 +9,7 @@ from .serializers import (
 from .models import PaymentMethod, PaymentTerm
 from rest_framework import viewsets
 from . import services
-from .services_backup import restore_backup
+from .services_backup import restore_backup, create_backup
 from apps.governance.permissions import IsAdmin
 
 
@@ -46,6 +46,9 @@ class SettingsGroupView(APIView):
                 "ALERT_EXPIRY_CRITICAL_DAYS",
                 "ALERT_EXPIRY_WARNING_DAYS",
                 "ALERT_LOW_STOCK_DEFAULT",
+                "ALERT_CHECK_FREQUENCY",
+                "AUTO_REMOVE_EXPIRED",
+                "OUT_OF_STOCK_ACTION",
             ],
             "tax": [
                 "TAX_GST_RATE",
@@ -72,11 +75,48 @@ class SettingsGroupView(APIView):
                 "SMTP_USER",
                 "SMTP_PASSWORD",
             ],
+            "backups": [
+                "AUTO_BACKUP_ENABLED",
+                "AUTO_BACKUP_FREQUENCY",
+                "AUTO_BACKUP_TIME",
+            ],
         }
         data = {}
         for group, items in keys.items():
             data[group] = {k: SettingKV.objects.filter(key=k).values_list("value", flat=True).first() for k in items}
         return Response(data)
+
+
+class SettingsGroupSaveView(APIView):
+    def post(self, request):
+        # Accept nested dict of {group: {KEY: value}}
+        payload = request.data or {}
+        to_write: dict[str, str] = {}
+        for group, kvs in payload.items():
+            if not isinstance(kvs, dict):
+                continue
+            for k, v in kvs.items():
+                if v is None:
+                    continue
+                to_write[str(k)] = str(v)
+        if not to_write:
+            return Response({"updated": 0})
+        from django.db import transaction
+        from .services import set_setting, get_setting
+        from apps.governance.services import audit
+        with transaction.atomic():
+            for k, v in to_write.items():
+                before = get_setting(k)
+                set_setting(k, v)
+                audit(
+                    request.user if request.user.is_authenticated else None,
+                    table="settings_kv",
+                    row_id=hash(k) % 2**31,
+                    action="UPSERT",
+                    before={"key": k, "value": before},
+                    after={"key": k, "value": v},
+                )
+        return self.get(request)
 
 
 class DocCounterViewSet(viewsets.ModelViewSet):
@@ -122,6 +162,14 @@ class BackupRestoreView(APIView):
         code = result.get("code")
         if code in {"RESTORE_DISABLED", "FORBIDDEN", "INVALID_PATH", "NOT_FOUND"}:
             return Response(result, status=status.HTTP_400_BAD_REQUEST)
+        return Response(result)
+
+
+class BackupCreateView(APIView):
+    permission_classes = [IsAdmin]
+
+    def post(self, request):
+        result = create_backup(actor=request.user)
         return Response(result)
 
 
