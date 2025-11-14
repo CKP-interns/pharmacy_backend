@@ -121,6 +121,40 @@ class SalesInvoiceViewSet(viewsets.ModelViewSet):
 
     @extend_schema(
         tags=["Sales"],
+        summary="Download PDF invoice",
+        responses={200: OpenApiTypes.BINARY, 501: OpenApiTypes.OBJECT},
+    )
+    @action(detail=True, methods=["get"], url_path="pdf", permission_classes=[IsAuthenticated])
+    def pdf(self, request, pk=None):
+        inv = self.get_object()
+        html = self._render_invoice_html(inv)
+        pdf_bytes = None
+        # Try WeasyPrint first
+        try:
+            from weasyprint import HTML  # type: ignore
+            pdf_bytes = HTML(string=html).write_pdf()
+        except Exception:
+            pdf_bytes = None
+        if pdf_bytes is None:
+            # Fallback to xhtml2pdf
+            try:
+                from xhtml2pdf import pisa  # type: ignore
+                import io
+                out = io.BytesIO()
+                pisa.CreatePDF(io.StringIO(html), dest=out)
+                pdf_bytes = out.getvalue()
+            except Exception:
+                pdf_bytes = None
+        if not pdf_bytes:
+            return Response({"ok": False, "code": "PDF_ENGINE_MISSING"}, status=501)
+        from django.http import HttpResponse
+        resp = HttpResponse(pdf_bytes, content_type="application/pdf")
+        filename = (inv.invoice_no or f"invoice-{inv.id}") + ".pdf"
+        resp["Content-Disposition"] = f"attachment; filename=\"{filename}\""
+        return resp
+
+    @extend_schema(
+        tags=["Sales"],
         summary="Export invoices list as CSV",
         parameters=[
             OpenApiParameter("status", OpenApiTypes.STR, OpenApiParameter.QUERY),

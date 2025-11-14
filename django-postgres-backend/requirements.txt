@@ -7,3 +7,5 @@ django-cors-headers==4.4.0
 drf-spectacular==0.27.2
 django-filter==24.3
 djangorestframework-simplejwt==5.3.1
+WeasyPrint==53.3
+xhtml2pdf==0.2.15
