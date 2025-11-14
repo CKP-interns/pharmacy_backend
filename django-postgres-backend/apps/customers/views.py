@@ -1,5 +1,6 @@
 from rest_framework import viewsets, filters, permissions, status
 from rest_framework.response import Response
+from rest_framework.decorators import action
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 from django.db.models import Sum, Count
 from datetime import date, timedelta
@@ -81,7 +82,7 @@ class CustomerViewSet(viewsets.ModelViewSet):
         summary="Customer invoices list (compact)",
         responses={200: OpenApiTypes.OBJECT},
     )
-    @filters.action(detail=True, methods=["get"], url_path="invoices")
+    @action(detail=True, methods=["get"], url_path="invoices")
     def customer_invoices(self, request, pk=None):
         from apps.sales.models import SalesInvoice
         inv = SalesInvoice.objects.filter(customer_id=pk).order_by("-invoice_date")[:100]
