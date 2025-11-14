@@ -31,6 +31,12 @@ class SalesInvoiceViewSet(viewsets.ModelViewSet):
             invoice.invoice_no = next_doc_number("INVOICE", "INV-", 5)
             invoice.save(update_fields=["invoice_no"])
 
+    def destroy(self, request, *args, **kwargs):
+        obj = self.get_object()
+        if obj.status == SalesInvoice.Status.POSTED:
+            return Response({"detail": "Cannot delete a POSTED invoice. Cancel instead."}, status=status.HTTP_400_BAD_REQUEST)
+        return super().destroy(request, *args, **kwargs)
+
     @action(detail=True, methods=["post"], url_path="post")
     def post_invoice(self, request, pk=None):
         invoice = self.get_object()
@@ -49,6 +55,144 @@ class SalesInvoiceViewSet(viewsets.ModelViewSet):
             return Response(result, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @extend_schema(
+        tags=["Sales"],
+        summary="Complete payment (post invoice if needed and record payment)",
+        request=OpenApiTypes.OBJECT,
+        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
+        examples=[OpenApiExample("Complete", value={"mode": "CASH", "amount": "auto"})],
+    )
+    @action(detail=True, methods=["post"], url_path="complete-payment")
+    def complete_payment(self, request, pk=None):
+        invoice = self.get_object()
+        with transaction.atomic():
+            # Ensure it is posted
+            if invoice.status == SalesInvoice.Status.DRAFT:
+                services.post_invoice(actor=request.user, invoice_id=invoice.id)
+                invoice.refresh_from_db()
+            amount = request.data.get("amount")
+            from decimal import Decimal
+            if amount in (None, "auto", ""):
+                amount = invoice.net_total
+            else:
+                amount = Decimal(str(amount))
+            mode = request.data.get("mode") or "CASH"
+            pay_ser = SalesPaymentSerializer(data={
+                "sale_invoice": invoice.id,
+                "amount": amount,
+                "mode": mode,
+            })
+            pay_ser.is_valid(raise_exception=True)
+            pay = pay_ser.save(received_by=request.user)
+        return Response({
+            "invoice_no": invoice.invoice_no,
+            "payment_id": pay.id,
+            "total_paid": str(invoice.total_paid),
+            "outstanding": str(invoice.outstanding),
+            "payment_status": invoice.payment_status,
+        })
+
+    @extend_schema(
+        tags=["Sales"],
+        summary="Printable HTML for invoice",
+        responses={200: OpenApiTypes.STR},
+    )
+    @action(detail=True, methods=["get"], url_path="print", permission_classes=[IsAuthenticated])
+    def print_view(self, request, pk=None):
+        inv = self.get_object()
+        html = self._render_invoice_html(inv)
+        return Response(html, content_type="text/html")
+
+    @extend_schema(
+        tags=["Sales"],
+        summary="Download HTML invoice (attachment)",
+        responses={200: OpenApiTypes.STR},
+    )
+    @action(detail=True, methods=["get"], url_path="download", permission_classes=[IsAuthenticated])
+    def download(self, request, pk=None):
+        inv = self.get_object()
+        from django.http import HttpResponse
+        html = self._render_invoice_html(inv)
+        resp = HttpResponse(html, content_type="text/html")
+        filename = (inv.invoice_no or f"invoice-{inv.id}") + ".html"
+        resp["Content-Disposition"] = f"attachment; filename=\"{filename}\""
+        return resp
+
+    @extend_schema(
+        tags=["Sales"],
+        summary="Export invoices list as CSV",
+        parameters=[
+            OpenApiParameter("status", OpenApiTypes.STR, OpenApiParameter.QUERY),
+            OpenApiParameter("customer", OpenApiTypes.INT, OpenApiParameter.QUERY),
+            OpenApiParameter("location", OpenApiTypes.INT, OpenApiParameter.QUERY),
+            OpenApiParameter("search", OpenApiTypes.STR, OpenApiParameter.QUERY),
+        ],
+        responses={200: OpenApiTypes.STR},
+    )
+    @action(detail=False, methods=["get"], url_path="export", permission_classes=[IsAuthenticated])
+    def export_csv(self, request):
+        qs = self.filter_queryset(self.get_queryset())
+        import csv
+        from django.http import HttpResponse
+        resp = HttpResponse(content_type="text/csv")
+        resp["Content-Disposition"] = "attachment; filename=\"invoices.csv\""
+        writer = csv.writer(resp)
+        writer.writerow(["invoice_no", "invoice_date", "customer", "total_items", "net_total", "payment_status"])
+        for inv in qs:
+            writer.writerow([
+                inv.invoice_no or inv.id,
+                inv.invoice_date.strftime("%Y-%m-%d %H:%M"),
+                getattr(inv.customer, "name", "-"),
+                inv.lines.count(),
+                inv.net_total,
+                inv.payment_status,
+            ])
+        return resp
+
+    def _render_invoice_html(self, inv: SalesInvoice) -> str:
+        lines = inv.lines.select_related("product", "batch_lot").all()
+        company = {
+            "name": "",
+            "address": "",
+            "phone": "",
+            "email": "",
+            "gst": "",
+        }
+        try:
+            from apps.settingsx.models import BusinessProfile
+            bp = BusinessProfile.objects.first()
+            if bp:
+                company = {
+                    "name": bp.business_name,
+                    "address": bp.address,
+                    "phone": bp.phone,
+                    "email": bp.email,
+                    "gst": bp.gst_number,
+                }
+        except Exception:
+            pass
+        rows = "".join([
+            f"<tr><td>{i+1}</td><td>{ln.product.name}</td><td>{ln.batch_lot.batch_no}</td><td>{ln.qty_base}</td><td>{ln.rate_per_base}</td><td>{ln.line_total}</td></tr>"
+            for i, ln in enumerate(lines)
+        ])
+        html = f"""
+        <html><head><meta charset='utf-8'><title>Invoice {inv.invoice_no or inv.id}</title>
+        <style>body{{font-family:Arial,Helvetica,sans-serif}} table{{border-collapse:collapse;width:100%}} td,th{{border:1px solid #ddd;padding:8px}}</style>
+        </head><body>
+        <h2>Invoice #{inv.invoice_no or inv.id}</h2>
+        <p>Date: {inv.invoice_date.strftime('%Y-%m-%d %H:%M')}</p>
+        <h3>{company['name']}</h3>
+        <p>{company['address']}<br/>Phone: {company['phone']} Email: {company['email']}<br/>GST: {company['gst']}</p>
+        <h4>Bill To: {getattr(inv.customer,'name','-')}</h4>
+        <table><thead><tr><th>#</th><th>Medicine Name</th><th>Batch</th><th>Qty</th><th>Price</th><th>Total</th></tr></thead>
+        <tbody>{rows}</tbody></table>
+        <p>Subtotal: {inv.gross_total} &nbsp; GST: {inv.tax_total} &nbsp; Total: {inv.net_total}</p>
+        <p>Payment Status: {inv.payment_status}</p>
+        <p>Thank you for choosing our pharmacy</p>
+        </body></html>
+        """
+        return html
 
 
 class SalesPaymentViewSet(viewsets.ModelViewSet):
