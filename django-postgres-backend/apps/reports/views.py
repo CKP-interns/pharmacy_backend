@@ -1,4 +1,5 @@
 from rest_framework import viewsets, permissions, status
+from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from django.utils import timezone
@@ -36,7 +37,7 @@ class ReportExportViewSet(viewsets.ModelViewSet):
         return Response(self.get_serializer(exports, many=True).data, status=status.HTTP_200_OK)
 
 
-class SalesSummaryView(viewsets.ViewSet):
+class SalesSummaryView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     @extend_schema(
@@ -50,7 +51,7 @@ class SalesSummaryView(viewsets.ViewSet):
         ],
         responses={200: OpenApiTypes.OBJECT},
     )
-    def list(self, request):
+    def get(self, request):
         from apps.sales.models import SalesInvoice
         from django.db.models.functions import TruncMonth
 
@@ -84,7 +85,7 @@ class SalesSummaryView(viewsets.ViewSet):
         })
 
 
-class PurchasesSummaryView(viewsets.ViewSet):
+class PurchasesSummaryView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     @extend_schema(
@@ -98,7 +99,7 @@ class PurchasesSummaryView(viewsets.ViewSet):
         ],
         responses={200: OpenApiTypes.OBJECT},
     )
-    def list(self, request):
+    def get(self, request):
         from apps.procurement.models import GoodsReceipt, GoodsReceiptLine
         from django.db.models.functions import TruncMonth
 
@@ -134,7 +135,7 @@ class PurchasesSummaryView(viewsets.ViewSet):
         })
 
 
-class ExpiryReportView(viewsets.ViewSet):
+class ExpiryReportView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     @extend_schema(
@@ -146,7 +147,7 @@ class ExpiryReportView(viewsets.ViewSet):
         ],
         responses={200: OpenApiTypes.OBJECT},
     )
-    def list(self, request):
+    def get(self, request):
         from apps.inventory.services import near_expiry
         from apps.settingsx.services import get_setting
         from apps.catalog.models import Product
@@ -215,7 +216,7 @@ class ExpiryReportView(viewsets.ViewSet):
         return Response(out)
 
 
-class ExpirySummaryView(viewsets.ViewSet):
+class ExpirySummaryView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     @extend_schema(
@@ -224,7 +225,7 @@ class ExpirySummaryView(viewsets.ViewSet):
         parameters=[OpenApiParameter("location_id", OpenApiTypes.INT, OpenApiParameter.QUERY)],
         responses={200: OpenApiTypes.OBJECT},
     )
-    def list(self, request):
+    def get(self, request):
         from apps.settingsx.services import get_setting
         from apps.catalog.models import Product
         from apps.inventory.services import near_expiry
@@ -265,7 +266,7 @@ class ExpirySummaryView(viewsets.ViewSet):
         })
 
 
-class TopSellingView(viewsets.ViewSet):
+class TopSellingView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     @extend_schema(
@@ -278,7 +279,7 @@ class TopSellingView(viewsets.ViewSet):
         ],
         responses={200: OpenApiTypes.OBJECT},
     )
-    def list(self, request):
+    def get(self, request):
         from apps.sales.models import SalesInvoice, SalesLine
         from django.db.models import Sum
         from_str = request.query_params.get("from")

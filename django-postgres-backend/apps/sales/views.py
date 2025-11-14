@@ -243,7 +243,7 @@ class SalesPaymentViewSet(viewsets.ModelViewSet):
             services._update_payment_status(payment.sale_invoice)
 
 
-class BillingStatsView(viewsets.ViewSet, APIView):
+class BillingStatsView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
@@ -274,7 +274,7 @@ class BillingStatsView(viewsets.ViewSet, APIView):
         return Response({"total_bills": total_bills, "total_products_sold": total_items, "total_revenue": float(total_revenue)})
 
 
-class MedicinesSuggestView(viewsets.ViewSet, APIView):
+class MedicinesSuggestView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
@@ -319,7 +319,7 @@ class MedicinesSuggestView(viewsets.ViewSet, APIView):
         return Response(out)
 
 
-class InvoiceQuoteView(viewsets.ViewSet, APIView):
+class InvoiceQuoteView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
