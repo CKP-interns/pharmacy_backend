@@ -200,6 +200,7 @@ class AddMedicineView(APIView):
     @extend_schema(
         tags=["Inventory"],
         summary="Add new medicine (product + batch + opening stock) in one call (Admin)",
+        description="Optionally pass purchase_price (per pack) to record in audit meta; for costing use GRN flow.",
         request=OpenApiTypes.OBJECT,
         responses={201: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
         examples=[
@@ -212,7 +213,8 @@ class AddMedicineView(APIView):
                         "base_unit": "TAB", "pack_unit": "STRIP", "units_per_pack": "10.000"
                     },
                     "batch": {"batch_no": "BTH-2024-078", "expiry_date": "2025-12-20"},
-                    "opening_qty_packs": "200"
+                    "opening_qty_packs": "200",
+                    "purchase_price": "4.50"
                 },
             )
         ],
@@ -228,6 +230,7 @@ class AddMedicineView(APIView):
         location_id = request.data.get("location_id")
         opening_qty_base = request.data.get("opening_qty_base")
         opening_qty_packs = request.data.get("opening_qty_packs") or request.data.get("quantity")
+        purchase_price = request.data.get("purchase_price") or request.data.get("unit_cost") or request.data.get("purchase_price_pack")
 
         if not location_id:
             return Response({"detail": "location_id is required"}, status=status.HTTP_400_BAD_REQUEST)
@@ -263,7 +266,7 @@ class AddMedicineView(APIView):
                 reorder_level=Decimal(str(product_data.get("reorder_level") or "0")),
                 description=product_data.get("description", ""),
                 storage_instructions=product_data.get("storage_instructions", ""),
-                preferred_vendor_id=product_data.get("preferred_vendor") or product_data.get("preferred_vendor_id"),
+                preferred_vendor_id=product_data.get("preferred_vendor") or product_data.get("preferred_vendor_id") or request.data.get("vendor_id"),
                 is_sensitive=bool(product_data.get("is_sensitive", False)),
                 is_active=True,
             )
@@ -309,12 +312,36 @@ class AddMedicineView(APIView):
                 actor=request.user if request.user.is_authenticated else None,
             )
 
+        # Audit with extra meta like purchase_price
+        try:
+            from apps.governance.services import audit
+            meta = {
+                "purchase_price_pack": str(purchase_price) if purchase_price is not None else None,
+                "opening_qty_base": f"{qty_base:.3f}",
+            }
+            audit(
+                request.user if request.user.is_authenticated else None,
+                table="inventory_add_medicine",
+                row_id=movement_id or batch.id,
+                action="CREATE",
+                before=None,
+                after={
+                    "product_id": product.id,
+                    "batch_lot_id": batch.id,
+                    "location_id": int(location_id),
+                },
+                meta=meta,
+            )
+        except Exception:
+            pass
+
         return Response(
             {
                 "product_id": product.id,
                 "batch_lot_id": batch.id,
                 "movement_id": movement_id,
                 "qty_base_written": f"{qty_base:.3f}",
+                "purchase_price_pack": str(purchase_price) if purchase_price is not None else None,
             },
             status=status.HTTP_201_CREATED,
         )
