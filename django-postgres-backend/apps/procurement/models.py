@@ -30,6 +30,9 @@ class Purchase(models.Model):
     net_total = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        ordering = ["-created_at"] 
+
     def __str__(self) -> str:
         return f"PO#{self.id} {self.vendor}"
 
