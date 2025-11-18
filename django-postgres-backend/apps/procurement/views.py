@@ -11,6 +11,7 @@ from .models import (
     Vendor, Purchase, PurchasePayment, PurchaseDocument, VendorReturn,
     PurchaseOrder, PurchaseOrderLine, GoodsReceipt, GoodsReceiptLine,
 )
+from apps.accounts.models import User as AccountsUser
 from .serializers import (
     VendorSerializer, PurchaseSerializer, PurchasePaymentSerializer,
     PurchaseDocumentSerializer, VendorReturnSerializer,
@@ -199,7 +200,12 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         po_number = next_doc_number('PO')
-        serializer.save(po_number=po_number, created_by=self.request.user if self.request.user.is_authenticated else None)
+        actor = None
+        if self.request.user and self.request.user.is_authenticated:
+            email = getattr(self.request.user, "email", None)
+            if email:
+                actor = AccountsUser.objects.filter(email=email).first()
+        serializer.save(po_number=po_number, created_by=actor)
 
     @action(detail=True, methods=["get", "post"], url_path="lines")
     def po_lines(self, request, pk=None):
