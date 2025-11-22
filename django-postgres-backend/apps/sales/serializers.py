@@ -9,11 +9,14 @@ CURRENCY_QUANT = Decimal("0.01")
 
 
 class SalesLineSerializer(serializers.ModelSerializer):
+    product_name = serializers.CharField(source="product.name", read_only=True)
+
+
     class Meta:
         model = SalesLine
         fields = "__all__"
         read_only_fields = ("line_total", "tax_amount", "sale_invoice")
-
+       
     def validate(self, data):
         prod = data.get("product")
         batch = data.get("batch_lot")
