@@ -111,7 +111,9 @@ class PurchaseOrder(models.Model):
 
 class PurchaseOrderLine(models.Model):
     po = models.ForeignKey(PurchaseOrder, on_delete=models.CASCADE, related_name='lines')
-    product = models.ForeignKey('catalog.Product', on_delete=models.PROTECT)
+    product = models.ForeignKey('catalog.Product', on_delete=models.PROTECT, null=True, blank=True)
+    requested_name = models.CharField(max_length=200, blank=True)
+    medicine_form = models.ForeignKey('catalog.MedicineForm', on_delete=models.SET_NULL, null=True, blank=True)
     qty_packs_ordered = models.IntegerField()
     expected_unit_cost = models.DecimalField(max_digits=14, decimal_places=2)
     gst_percent_override = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
@@ -137,7 +139,7 @@ class GoodsReceipt(models.Model):
 class GoodsReceiptLine(models.Model):
     grn = models.ForeignKey(GoodsReceipt, on_delete=models.CASCADE, related_name='lines')
     po_line = models.ForeignKey(PurchaseOrderLine, on_delete=models.PROTECT)
-    product = models.ForeignKey('catalog.Product', on_delete=models.PROTECT)
+    product = models.ForeignKey('catalog.Product', on_delete=models.PROTECT, null=True, blank=True)
     batch_no = models.CharField(max_length=64)
     mfg_date = models.DateField(null=True, blank=True)
     expiry_date = models.DateField(null=True, blank=True)
@@ -146,4 +148,6 @@ class GoodsReceiptLine(models.Model):
     qty_base_damaged = models.DecimalField(max_digits=14, decimal_places=3, default=0)
     unit_cost = models.DecimalField(max_digits=14, decimal_places=2)
     mrp = models.DecimalField(max_digits=14, decimal_places=2)
+    rack_no = models.CharField(max_length=64, blank=True)
+    new_product_payload = models.JSONField(blank=True, null=True)
 

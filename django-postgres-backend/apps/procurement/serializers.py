@@ -61,7 +61,17 @@ class PurchaseOrderLineSerializer(serializers.ModelSerializer):
         extra_kwargs = {
             "po": {"required": False},
             "expected_unit_cost": {"required": False},
+            "product": {"required": False, "allow_null": True},
+            "medicine_form": {"required": False, "allow_null": True},
         }
+
+    def validate(self, attrs):
+        product = attrs.get("product")
+        requested_name = (attrs.get("requested_name") or "").strip()
+        if not product and not requested_name:
+            raise serializers.ValidationError("Either product or requested_name must be provided.")
+        attrs["requested_name"] = requested_name
+        return attrs
 
 
 class PurchaseOrderSerializer(serializers.ModelSerializer):
@@ -86,46 +96,7 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
         validated_data.pop("net_total", None)
 
         po = PurchaseOrder.objects.create(**validated_data)
-        gross_total = Decimal("0.00")
-        tax_total = Decimal("0.00")
-        for line in lines:
-            product = Product.objects.get(id=line["product"].id if hasattr(line.get("product"), "id") else line["product"])
-            qty = Decimal(line.get("qty_packs_ordered") or 0)
-            # if frontend didn't send unit cost (UI hides price field), derive sensible default
-            raw_cost = line.get("expected_unit_cost")
-            if raw_cost in (None, "", 0, "0"):
-                from .models import GoodsReceiptLine, GoodsReceipt
-                vendor = validated_data.get("vendor")
-                cost = None
-                if vendor is not None:
-                    # latest GRN for this vendor+product
-                    gl = (
-                        GoodsReceiptLine.objects.filter(
-                            grn__po__vendor=vendor,
-                            grn__status=GoodsReceipt.Status.POSTED,
-                            product_id=product.id,
-                        )
-                        .order_by("-grn__received_at")
-                        .first()
-                    )
-                    if gl:
-                        cost = gl.unit_cost
-                # fallback to product.mrp
-                if cost is None:
-                    cost = product.mrp
-                line["expected_unit_cost"] = cost
-            else:
-                cost = Decimal(raw_cost)
-            gst_override = line.get("gst_percent_override")
-            parts = compute_po_line_totals(
-                qty_packs=qty,
-                unit_cost_pack=cost,
-                product_gst_percent=Decimal(product.gst_percent or 0),
-                gst_override=Decimal(gst_override) if gst_override is not None else None,
-            )
-            gross_total += parts["gross"]
-            tax_total += parts["tax"]
-            PurchaseOrderLine.objects.create(po=po, **line)
+        gross_total, tax_total = self._save_lines(po, lines, validated_data.get("vendor"))
         po.gross_total = gross_total
         po.tax_total = tax_total
         po.net_total = (gross_total + tax_total).quantize(Decimal("0.01"))
@@ -143,56 +114,92 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
         instance.save()
         # Recompute only if lines provided; leave lines intact otherwise
         if lines is not None:
-            gross_total = Decimal("0.00")
-            tax_total = Decimal("0.00")
-            # naive: replace all lines
             PurchaseOrderLine.objects.filter(po=instance).delete()
-            for line in lines:
-                product = Product.objects.get(id=line["product"].id if hasattr(line.get("product"), "id") else line["product"])
-                qty = Decimal(line.get("qty_packs_ordered") or 0)
-                raw_cost = line.get("expected_unit_cost")
-                if raw_cost in (None, "", 0, "0"):
-                    from .models import GoodsReceiptLine, GoodsReceipt
-                    vendor = instance.vendor
-                    cost = None
-                    if vendor is not None:
-                        gl = (
-                            GoodsReceiptLine.objects.filter(
-                                grn__po__vendor=vendor,
-                                grn__status=GoodsReceipt.Status.POSTED,
-                                product_id=product.id,
-                            )
-                            .order_by("-grn__received_at")
-                            .first()
-                        )
-                        if gl:
-                            cost = gl.unit_cost
-                    if cost is None:
-                        cost = product.mrp
-                    line["expected_unit_cost"] = cost
-                else:
-                    cost = Decimal(raw_cost)
-                gst_override = line.get("gst_percent_override")
-                parts = compute_po_line_totals(
-                    qty_packs=qty,
-                    unit_cost_pack=cost,
-                    product_gst_percent=Decimal(product.gst_percent or 0),
-                    gst_override=Decimal(gst_override) if gst_override is not None else None,
-                )
-                gross_total += parts["gross"]
-                tax_total += parts["tax"]
-                PurchaseOrderLine.objects.create(po=instance, **line)
+            gross_total, tax_total = self._save_lines(instance, lines, instance.vendor)
             instance.gross_total = gross_total
             instance.tax_total = tax_total
             instance.net_total = (gross_total + tax_total).quantize(Decimal("0.01"))
             instance.save(update_fields=["gross_total", "tax_total", "net_total"])
         return instance
 
+    def _save_lines(self, po, lines, vendor):
+        gross_total = Decimal("0.00")
+        tax_total = Decimal("0.00")
+        vendor_obj = vendor
+        for raw in lines:
+            line = dict(raw)
+            product = line.get("product")
+            if product and not isinstance(product, Product):
+                product = Product.objects.filter(id=product).first()
+            line["product"] = product
+            if product and not line.get("requested_name"):
+                line["requested_name"] = product.name
+            qty = Decimal(str(line.get("qty_packs_ordered") or "0"))
+            raw_cost = line.get("expected_unit_cost")
+            cost = Decimal(str(raw_cost or "0"))
+            if raw_cost in (None, "", 0, "0"):
+                cost = self._derive_unit_cost(product, vendor_obj)
+                line["expected_unit_cost"] = cost
+            gst_override = line.get("gst_percent_override")
+            product_gst = Decimal(product.gst_percent or 0) if product else Decimal("0")
+            parts = compute_po_line_totals(
+                qty_packs=qty,
+                unit_cost_pack=cost,
+                product_gst_percent=product_gst,
+                gst_override=Decimal(gst_override) if gst_override is not None else None,
+            )
+            gross_total += parts["gross"]
+            tax_total += parts["tax"]
+            PurchaseOrderLine.objects.create(po=po, **line)
+        return gross_total, tax_total
+
+    def _derive_unit_cost(self, product, vendor):
+        if not product:
+            return Decimal("0.00")
+        from .models import GoodsReceiptLine, GoodsReceipt
+
+        cost = None
+        if vendor is not None:
+            gl = (
+                GoodsReceiptLine.objects.filter(
+                    grn__po__vendor=vendor,
+                    grn__status=GoodsReceipt.Status.POSTED,
+                    product_id=product.id,
+                )
+                .order_by("-grn__received_at")
+                .first()
+            )
+            if gl:
+                cost = gl.unit_cost
+        if cost is None:
+            cost = product.mrp or Decimal("0.00")
+        return Decimal(cost)
+
 
 class GoodsReceiptLineSerializer(serializers.ModelSerializer):
+    new_product = serializers.DictField(write_only=True, required=False, allow_null=True)
+
     class Meta:
         model = GoodsReceiptLine
         fields = "__all__"
+        extra_kwargs = {
+            "product": {"required": False, "allow_null": True},
+        }
+
+    def validate(self, attrs):
+        new_product = attrs.pop("new_product", None)
+        product = attrs.get("product")
+        if not product and not new_product:
+            raise serializers.ValidationError("Either product or new_product must be supplied.")
+        if new_product:
+            required = ["name", "base_unit", "pack_unit", "units_per_pack", "mrp", "medicine_form"]
+            missing = [field for field in required if not new_product.get(field)]
+            if missing:
+                raise serializers.ValidationError(
+                    {"new_product": f"Missing fields: {', '.join(missing)}"}
+                )
+            attrs["new_product_payload"] = new_product
+        return attrs
 
 
 class GoodsReceiptSerializer(serializers.ModelSerializer):

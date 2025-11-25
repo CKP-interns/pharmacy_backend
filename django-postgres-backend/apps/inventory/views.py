@@ -265,16 +265,17 @@ class AddMedicineView(APIView):
             missing = [f for f in required if not product_data.get(f)]
             if missing:
                 return Response({"detail": f"Missing product fields: {', '.join(missing)}"}, status=status.HTTP_400_BAD_REQUEST)
-            product = Product.objects.create(
-                code=product_data.get("code"),
-                name=product_data.get("name"),
-                generic_name=product_data.get("generic_name", ""),
-                dosage_strength=product_data.get("dosage_strength", ""),
-                hsn=product_data.get("hsn", ""),
-                schedule=product_data.get("schedule", Product.Schedule.OTC),
-                category_id=product_data.get("category") or product_data.get("category_id"),
-                pack_size=product_data.get("pack_size", ""),
-                manufacturer=product_data.get("manufacturer", ""),
+                product = Product.objects.create(
+                    code=product_data.get("code"),
+                    name=product_data.get("name"),
+                    generic_name=product_data.get("generic_name", ""),
+                    dosage_strength=product_data.get("dosage_strength", ""),
+                    hsn=product_data.get("hsn", ""),
+                    schedule=product_data.get("schedule", Product.Schedule.OTC),
+                    category_id=product_data.get("category") or product_data.get("category_id"),
+                    medicine_form_id=product_data.get("medicine_form") or product_data.get("medicine_form_id"),
+                    pack_size=product_data.get("pack_size", ""),
+                    manufacturer=product_data.get("manufacturer", ""),
                 mrp=Decimal(str(product_data.get("mrp"))),
                 base_unit=product_data.get("base_unit"),
                 pack_unit=product_data.get("pack_unit"),

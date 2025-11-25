@@ -27,6 +27,7 @@ class Product(models.Model):
     hsn = models.CharField(max_length=32, blank=True)
     schedule = models.CharField(max_length=8, choices=Schedule.choices, default=Schedule.OTC)
     category = models.ForeignKey(ProductCategory, on_delete=models.SET_NULL, null=True, blank=True)
+    medicine_form = models.ForeignKey("catalog.MedicineForm", on_delete=models.SET_NULL, null=True, blank=True)
     pack_size = models.CharField(max_length=64, blank=True)
     manufacturer = models.CharField(max_length=200, blank=True)
     mrp = models.DecimalField(max_digits=14, decimal_places=2, help_text="MRP per pack")

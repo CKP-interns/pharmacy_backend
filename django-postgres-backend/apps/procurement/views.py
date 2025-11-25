@@ -223,7 +223,12 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
                     "id": ln.id,
                     "product_id": prod.id if prod else None,
                     "product_code": getattr(prod, "code", None),
-                    "product_name": getattr(prod, "name", None),
+                    "product_name": getattr(prod, "name", None) or ln.requested_name,
+                    "requested_name": ln.requested_name,
+                    "medicine_form": {
+                        "id": ln.medicine_form_id,
+                        "name": ln.medicine_form.name if ln.medicine_form_id else None,
+                    },
                     "manufacturer": getattr(prod, "manufacturer", None),
                     "pack_size": getattr(prod, "pack_size", None),
                     "qty_packs_ordered": ln.qty_packs_ordered,
@@ -345,21 +350,34 @@ class PoImportCommitView(APIView):
             }
             for ln in v_lines:
                 product_id = ln.get("product_id")
+                requested_name = (ln.get("requested_name") or ln.get("product_name") or ln.get("name") or "").strip()
+                medicine_form_id = ln.get("medicine_form_id") or ln.get("medicine_form")
                 if not product_id:
                     vend_code = ln.get("vendor_code") or ln.get("product_code") or ""
-                    prod = product_by_vendor_code(int(vendor_id), vend_code)
-                    if not prod:
-                        msg = f"Unable to resolve product for code '{vend_code}' for vendor {vendor_id}"
-                        return Response({"detail": msg}, status=status.HTTP_400_BAD_REQUEST)
-                    product_id = prod.id
-                po_payload["lines"].append(
-                    {
-                        "product": product_id,
-                        "qty_packs_ordered": ln.get("qty") or ln.get("qty_packs") or ln.get("qty_packs_ordered") or 0,
-                        "expected_unit_cost": ln.get("unit_cost") or ln.get("price") or ln.get("expected_unit_cost") or "0.00",
-                        "gst_percent_override": ln.get("gst_percent") or ln.get("gst_percent_override"),
-                    }
-                )
+                    if vend_code:
+                        prod = product_by_vendor_code(int(vendor_id), vend_code)
+                        if prod:
+                            product_id = prod.id
+                    if not product_id and not requested_name:
+                        return Response(
+                            {"detail": "Each line must include product_id or product_name."},
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+                if not product_id and not medicine_form_id:
+                    return Response(
+                        {"detail": "medicine_form is required when adding a new product."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                line_payload = {
+                    "product": product_id,
+                    "medicine_form": medicine_form_id,
+                    "qty_packs_ordered": ln.get("qty") or ln.get("qty_packs") or ln.get("qty_packs_ordered") or 0,
+                    "expected_unit_cost": ln.get("unit_cost") or ln.get("price") or ln.get("expected_unit_cost") or "0.00",
+                    "gst_percent_override": ln.get("gst_percent") or ln.get("gst_percent_override"),
+                }
+                if requested_name:
+                    line_payload["requested_name"] = requested_name
+                po_payload["lines"].append(line_payload)
 
             ser = PurchaseOrderSerializer(data=po_payload)
             ser.is_valid(raise_exception=True)

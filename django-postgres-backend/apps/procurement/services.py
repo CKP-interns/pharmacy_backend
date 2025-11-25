@@ -69,11 +69,27 @@ def post_goods_receipt(grn_id: int, actor) -> None:
     if grn.status == GoodsReceipt.Status.POSTED:
         raise ValueError("GRN already POSTED")
 
-    for ln in grn.lines.all():
+    for ln in grn.lines.select_related("po_line").all():
         if not ln.expiry_date or (ln.qty_packs_received or 0) <= 0:
             raise ValueError("Each GRN line must have expiry_date and qty_packs_received > 0")
 
-        product: Product = ln.product
+        product: Product | None = ln.product
+        if not product:
+            product = _create_product_from_payload(ln.new_product_payload or {}, default_vendor_id=grn.po.vendor_id)
+            ln.product = product
+            ln.save(update_fields=["product"])
+            if ln.po_line and not ln.po_line.product_id:
+                pol = ln.po_line
+                pol.product = product
+                updates = ["product"]
+                if not pol.requested_name:
+                    pol.requested_name = product.name
+                    updates.append("requested_name")
+                if product.medicine_form_id and not pol.medicine_form_id:
+                    pol.medicine_form_id = product.medicine_form_id
+                    updates.append("medicine_form")
+                pol.save(update_fields=updates)
+
         batch, _ = BatchLot.objects.get_or_create(
             product=product,
             batch_no=ln.batch_no,
@@ -92,8 +108,8 @@ def post_goods_receipt(grn_id: int, actor) -> None:
             batch.expiry_date = ln.expiry_date
             changed = True
         # Suggest/assign rack
-        rack = assign_rack(grn.location_id, product.manufacturer or "")
-        if rack and not batch.rack_no:
+        rack = ln.rack_no or assign_rack(grn.location_id, product.manufacturer or "")
+        if rack and batch.rack_no != rack:
             batch.rack_no = rack
             changed = True
         if changed:
@@ -146,6 +162,52 @@ def post_goods_receipt(grn_id: int, actor) -> None:
         after={"status": grn.status, "po_id": grn.po_id},
     )
     emit_event("GRN_POSTED", {"grn_id": grn.id, "po_id": grn.po_id})
+
+
+def _create_product_from_payload(payload: dict, default_vendor_id=None) -> Product:
+    if not payload:
+        raise ValueError("Product details are required for new medicines.")
+    from decimal import Decimal as _Decimal
+
+    name = payload.get("name")
+    if not name:
+        raise ValueError("Product name is required.")
+    required = ["base_unit", "pack_unit", "units_per_pack", "mrp"]
+    missing = [field for field in required if not payload.get(field)]
+    if missing:
+        raise ValueError(f"Missing product fields: {', '.join(missing)}")
+    code = payload.get("code")
+    if not code:
+        last = Product.objects.order_by("-id").first()
+        next_id = (last.id + 1) if last else 1
+        code = f"PRD-{next_id:05d}"
+    product = Product.objects.create(
+        code=code,
+        name=name,
+        generic_name=payload.get("generic_name", ""),
+        dosage_strength=payload.get("dosage_strength", ""),
+        hsn=payload.get("hsn", ""),
+        schedule=payload.get("schedule", Product.Schedule.OTC),
+        category_id=payload.get("category") or payload.get("category_id"),
+        medicine_form_id=payload.get("medicine_form"),
+        pack_size=payload.get("pack_size", ""),
+        manufacturer=payload.get("manufacturer", ""),
+        mrp=_Decimal(str(payload.get("mrp") or "0")),
+        base_unit=payload.get("base_unit"),
+        pack_unit=payload.get("pack_unit"),
+        units_per_pack=_Decimal(str(payload.get("units_per_pack") or "1")),
+        base_unit_step=_Decimal(str(payload.get("base_unit_step") or "1.000")),
+        gst_percent=_Decimal(str(payload.get("gst_percent") or "0")),
+        reorder_level=_Decimal(str(payload.get("reorder_level") or "0")),
+        description=payload.get("description", ""),
+        storage_instructions=payload.get("storage_instructions", ""),
+        preferred_vendor_id=payload.get("preferred_vendor")
+        or payload.get("preferred_vendor_id")
+        or default_vendor_id,
+        is_sensitive=bool(payload.get("is_sensitive", False)),
+        is_active=True,
+    )
+    return product
 
 
 @transaction.atomic
