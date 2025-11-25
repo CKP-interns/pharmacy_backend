@@ -192,12 +192,14 @@ class GoodsReceiptLineSerializer(serializers.ModelSerializer):
         if not product and not new_product:
             raise serializers.ValidationError("Either product or new_product must be supplied.")
         if new_product:
-            required = ["name", "base_unit", "pack_unit", "units_per_pack", "mrp", "medicine_form"]
-            missing = [field for field in required if not new_product.get(field)]
-            if missing:
-                raise serializers.ValidationError(
-                    {"new_product": f"Missing fields: {', '.join(missing)}"}
-                )
+            product_id = new_product.get("product_id") or new_product.get("id")
+            if not product_id:
+                required = ["name", "base_unit", "pack_unit", "units_per_pack", "mrp", "medicine_form"]
+                missing = [field for field in required if not new_product.get(field)]
+                if missing:
+                    raise serializers.ValidationError(
+                        {"new_product": f"Missing fields: {', '.join(missing)}"}
+                    )
             attrs["new_product_payload"] = new_product
         return attrs
 

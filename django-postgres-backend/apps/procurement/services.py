@@ -75,7 +75,9 @@ def post_goods_receipt(grn_id: int, actor) -> None:
 
         product: Product | None = ln.product
         if not product:
-            product = _create_product_from_payload(ln.new_product_payload or {}, default_vendor_id=grn.po.vendor_id)
+            product = _create_or_update_product_from_payload(
+                ln.new_product_payload or {}, default_vendor_id=grn.po.vendor_id
+            )
             ln.product = product
             ln.save(update_fields=["product"])
             if ln.po_line and not ln.po_line.product_id:
@@ -164,12 +166,66 @@ def post_goods_receipt(grn_id: int, actor) -> None:
     emit_event("GRN_POSTED", {"grn_id": grn.id, "po_id": grn.po_id})
 
 
-def _create_product_from_payload(payload: dict, default_vendor_id=None) -> Product:
+def _create_or_update_product_from_payload(payload: dict, default_vendor_id=None) -> Product:
     if not payload:
         raise ValueError("Product details are required for new medicines.")
     from decimal import Decimal as _Decimal
 
     name = payload.get("name")
+    product = None
+    product_id = payload.get("product_id") or payload.get("id")
+    if product_id:
+        product = Product.objects.filter(id=product_id).first()
+    if not product:
+        code = payload.get("code")
+        if code:
+            product = Product.objects.filter(code__iexact=code).first()
+    if not product and name:
+        product = Product.objects.filter(name__iexact=name).first()
+
+    fields = {
+        "name": name,
+        "generic_name": payload.get("generic_name"),
+        "dosage_strength": payload.get("dosage_strength"),
+        "hsn": payload.get("hsn"),
+        "schedule": payload.get("schedule") or Product.Schedule.OTC,
+        "category_id": payload.get("category") or payload.get("category_id"),
+        "medicine_form_id": payload.get("medicine_form"),
+        "pack_size": payload.get("pack_size"),
+        "manufacturer": payload.get("manufacturer"),
+        "mrp": _Decimal(str(payload.get("mrp"))) if payload.get("mrp") is not None else None,
+        "base_unit": payload.get("base_unit"),
+        "pack_unit": payload.get("pack_unit"),
+        "units_per_pack": _Decimal(str(payload.get("units_per_pack")))
+        if payload.get("units_per_pack") is not None
+        else None,
+        "base_unit_step": _Decimal(str(payload.get("base_unit_step")))
+        if payload.get("base_unit_step") is not None
+        else None,
+        "gst_percent": _Decimal(str(payload.get("gst_percent")))
+        if payload.get("gst_percent") is not None
+        else None,
+        "reorder_level": _Decimal(str(payload.get("reorder_level")))
+        if payload.get("reorder_level") is not None
+        else None,
+        "description": payload.get("description"),
+        "storage_instructions": payload.get("storage_instructions"),
+        "preferred_vendor_id": payload.get("preferred_vendor")
+        or payload.get("preferred_vendor_id")
+        or default_vendor_id,
+        "is_sensitive": payload.get("is_sensitive"),
+    }
+
+    if product:
+        update_fields = []
+        for attr, value in fields.items():
+            if value is not None and getattr(product, attr) != value:
+                setattr(product, attr, value)
+                update_fields.append(attr)
+        if update_fields:
+            product.save(update_fields=update_fields)
+        return product
+
     if not name:
         raise ValueError("Product name is required.")
     required = ["base_unit", "pack_unit", "units_per_pack", "mrp"]
@@ -184,27 +240,25 @@ def _create_product_from_payload(payload: dict, default_vendor_id=None) -> Produ
     product = Product.objects.create(
         code=code,
         name=name,
-        generic_name=payload.get("generic_name", ""),
-        dosage_strength=payload.get("dosage_strength", ""),
-        hsn=payload.get("hsn", ""),
-        schedule=payload.get("schedule", Product.Schedule.OTC),
-        category_id=payload.get("category") or payload.get("category_id"),
-        medicine_form_id=payload.get("medicine_form"),
-        pack_size=payload.get("pack_size", ""),
-        manufacturer=payload.get("manufacturer", ""),
-        mrp=_Decimal(str(payload.get("mrp") or "0")),
-        base_unit=payload.get("base_unit"),
-        pack_unit=payload.get("pack_unit"),
-        units_per_pack=_Decimal(str(payload.get("units_per_pack") or "1")),
-        base_unit_step=_Decimal(str(payload.get("base_unit_step") or "1.000")),
-        gst_percent=_Decimal(str(payload.get("gst_percent") or "0")),
-        reorder_level=_Decimal(str(payload.get("reorder_level") or "0")),
-        description=payload.get("description", ""),
-        storage_instructions=payload.get("storage_instructions", ""),
-        preferred_vendor_id=payload.get("preferred_vendor")
-        or payload.get("preferred_vendor_id")
-        or default_vendor_id,
-        is_sensitive=bool(payload.get("is_sensitive", False)),
+        generic_name=fields["generic_name"] or "",
+        dosage_strength=fields["dosage_strength"] or "",
+        hsn=fields["hsn"] or "",
+        schedule=fields["schedule"],
+        category_id=fields["category_id"],
+        medicine_form_id=fields["medicine_form_id"],
+        pack_size=fields["pack_size"] or "",
+        manufacturer=fields["manufacturer"] or "",
+        mrp=fields["mrp"],
+        base_unit=fields["base_unit"],
+        pack_unit=fields["pack_unit"],
+        units_per_pack=fields["units_per_pack"],
+        base_unit_step=fields["base_unit_step"] or _Decimal("1.000"),
+        gst_percent=fields["gst_percent"] or _Decimal("0"),
+        reorder_level=fields["reorder_level"] or _Decimal("0"),
+        description=fields["description"] or "",
+        storage_instructions=fields["storage_instructions"] or "",
+        preferred_vendor_id=fields["preferred_vendor_id"],
+        is_sensitive=bool(fields["is_sensitive"]),
         is_active=True,
     )
     return product

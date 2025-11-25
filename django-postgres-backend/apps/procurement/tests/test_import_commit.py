@@ -14,10 +14,10 @@ class ImportCommitTests(TestCase):
         self.client = APIClient()
         self.vendor = Vendor.objects.create(name="Cipla")
         self.loc = Location.objects.create(code="LOC", name="Loc")
-        cat = ProductCategory.objects.create(name="Cat")
+        self.cat = ProductCategory.objects.create(name="Cat")
         self.form = MedicineForm.objects.create(name="Tablet")
         self.p1 = Product.objects.create(
-            code="TAB1", name="Tablet 1", category=cat, hsn="", schedule="OTC",
+            code="TAB1", name="Tablet 1", category=self.cat, hsn="", schedule="OTC",
             pack_size="1x10", manufacturer="M1", mrp=Decimal("100.00"), base_unit="TAB", pack_unit="STRIP", units_per_pack=Decimal("10.000"), base_unit_step=Decimal("1.000"), gst_percent=Decimal("12.00"), reorder_level=Decimal("0.000"),
         )
         VendorProductCode.objects.create(vendor=self.vendor, product=self.p1, vendor_code="V-TAB1")
@@ -112,4 +112,62 @@ class ImportCommitTests(TestCase):
         pol.refresh_from_db()
         assert pol.product_id == line.product_id
         assert pol.medicine_form_id == self.form.id
+
+    def test_grn_post_updates_existing_product(self):
+        po = PurchaseOrder.objects.create(
+            vendor=self.vendor,
+            location=self.loc,
+            po_number="PO-UPD",
+            status=PurchaseOrder.Status.OPEN,
+        )
+        pol = PurchaseOrderLine.objects.create(
+            po=po,
+            product=None,
+            requested_name="Existing Product",
+            medicine_form=self.form,
+            qty_packs_ordered=1,
+            expected_unit_cost=Decimal("0"),
+        )
+        existing = Product.objects.create(
+            code="EXIST-001",
+            name="Existing Product",
+            category=self.cat,
+            hsn="",
+            schedule="OTC",
+            pack_size="1x10",
+            manufacturer="Old MFG",
+            mrp=Decimal("10.00"),
+            base_unit="TAB",
+            pack_unit="STRIP",
+            units_per_pack=Decimal("10.000"),
+            base_unit_step=Decimal("1.000"),
+            gst_percent=Decimal("5.00"),
+            reorder_level=Decimal("0.000"),
+        )
+        grn = GoodsReceipt.objects.create(po=po, location=self.loc, status=GoodsReceipt.Status.DRAFT)
+        GoodsReceiptLine.objects.create(
+            grn=grn,
+            po_line=pol,
+            product=None,
+            batch_no="BNEW-2",
+            mfg_date=date.today(),
+            expiry_date=date.today().replace(year=date.today().year + 1),
+            qty_packs_received=1,
+            qty_base_received=Decimal("0"),
+            unit_cost=Decimal("0"),
+            mrp=Decimal("0"),
+            new_product_payload={
+                "product_id": existing.id,
+                "name": "Existing Product",
+                "manufacturer": "Updated MFG",
+                "pack_size": "1x20",
+                "mrp": "15.00",
+                "medicine_form": self.form.id,
+            },
+        )
+        post_goods_receipt(grn.id, actor=None)
+        existing.refresh_from_db()
+        assert existing.manufacturer == "Updated MFG"
+        assert existing.pack_size == "1x20"
+        assert str(existing.mrp) == "15.00"
 
