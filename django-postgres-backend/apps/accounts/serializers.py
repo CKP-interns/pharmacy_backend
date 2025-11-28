@@ -18,8 +18,6 @@ class OkSerializer(serializers.Serializer):
 class OTPRequestSerializer(serializers.Serializer):
     email = serializers.EmailField()
 
-
-<<<<<<< HEAD
 # -----------------------------
 # OTP VERIFY
 # -----------------------------
@@ -31,13 +29,13 @@ class OTPVerifySerializer(serializers.Serializer):
 # -----------------------------
 # RESET PASSWORD
 # -----------------------------
-=======
+
 class VerifyOtpSerializer(serializers.Serializer):
     email = serializers.EmailField()
     otp = serializers.CharField(min_length=4, max_length=6)
 
 
->>>>>>> 47cfe8b92407e47beec70b77fffb36e33904f5d7
+
 class ResetPasswordSerializer(serializers.Serializer):
     uid = serializers.CharField()
     token = serializers.CharField()

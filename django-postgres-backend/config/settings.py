@@ -166,7 +166,7 @@ SPECTACULAR_SETTINGS = {
     'DEFAULT_GENERATOR_CLASS': 'core.schema.CustomSchemaGenerator',
 }
 
-<<<<<<< HEAD
+
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = 'smtp.gmail.com'
 EMAIL_PORT = 587
@@ -174,7 +174,4 @@ EMAIL_USE_TLS = True
 EMAIL_HOST_USER = 'saishashank0143@gmail.com'  # your Gmail ID
 EMAIL_HOST_PASSWORD = 'umht bsic hycy pgli'          # 16-char App Password
 DEFAULT_FROM_EMAIL = 'saishashank0143@gmail.com'
-=======
-EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
-DEFAULT_FROM_EMAIL = 'no-reply@pharmacy.local'
->>>>>>> 47cfe8b92407e47beec70b77fffb36e33904f5d7
+
