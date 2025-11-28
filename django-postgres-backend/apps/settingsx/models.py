@@ -48,8 +48,18 @@ class BackupArchive(models.Model):
 
 
 class PaymentMethod(models.Model):
+    class MethodType(models.TextChoices):
+        CASH = "CASH", "Cash"
+        UPI = "UPI", "UPI"
+        CARD_CREDIT = "CARD_CREDIT", "Card - Credit"
+        CARD_DEBIT = "CARD_DEBIT", "Card - Debit"
+        NET_BANKING = "NET_BANKING", "Net Banking"
+        CREDIT = "CREDIT", "On Credit"
+        OTHER = "OTHER", "Other"
+
     name = models.CharField(max_length=120, unique=True)
     description = models.CharField(max_length=512, null=True, blank=True)
+    method_type = models.CharField(max_length=32, choices=MethodType.choices, default=MethodType.OTHER)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 

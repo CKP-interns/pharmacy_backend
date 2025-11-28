@@ -294,7 +294,7 @@ class ExpiryReportView(APIView):
             # Apply window filter
             if window == "critical" and status_txt != "Critical":
                 continue
-            if window == "warning" and status_txt != "warning":
+            if window == "warning" and status_txt != "Warning":
                 continue
 
             prod = products.get(r.get("product_id"))

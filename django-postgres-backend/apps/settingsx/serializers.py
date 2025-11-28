@@ -39,12 +39,16 @@ class PaymentMethodSerializer(serializers.ModelSerializer):
         desc = attrs.get("description")
         if desc and len(desc) > 512:
             raise serializers.ValidationError({"description": "Max 512 chars."})
+        method_type = attrs.get("method_type") or getattr(self.instance, "method_type", None) or PaymentMethod.MethodType.OTHER
+        if method_type not in dict(PaymentMethod.MethodType.choices):
+            raise serializers.ValidationError({"method_type": "Invalid method type."})
         qs = PaymentMethod.objects.filter(name__iexact=name)
         if self.instance:
             qs = qs.exclude(pk=self.instance.pk)
         if qs.exists():
             raise Conflict()
         attrs["name"] = name
+        attrs["method_type"] = method_type
         return attrs
 
 

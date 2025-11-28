@@ -480,6 +480,8 @@ class MedicinesListView(APIView):
             )
 
         q = request.query_params.get("q") or ""
+        category_id = request.query_params.get("category_id")
+        status_filter = (request.query_params.get("status") or "").upper()
 
         base_qs = (
             InventoryMovement.objects.filter(location_id=location_id)
@@ -507,6 +509,13 @@ class MedicinesListView(APIView):
                 or q_lower in (r.get("batch_lot__batch_no") or "").lower()
             ]
 
+        if category_id:
+            try:
+                cat_id_int = int(category_id)
+                base_qs = [r for r in base_qs if r.get("batch_lot__product__category_id") == cat_id_int]
+            except ValueError:
+                return Response({"detail": "category_id must be an integer"}, status=status.HTTP_400_BAD_REQUEST)
+
         cat_ids = {r["batch_lot__product__category_id"] for r in base_qs if r.get("batch_lot__product__category_id")}
         cat_map = {
             c.id: c.name for c in ProductCategory.objects.filter(id__in=cat_ids)
@@ -516,19 +525,33 @@ class MedicinesListView(APIView):
         for r in base_qs:
             qty = r.get("quantity") or Decimal("0")
             # include zero and negative as Out of Stock rows so UI can still show them
-            out.append(
-                {
-                    "id": r["batch_lot_id"],
-                    "medicine_id": r.get("batch_lot__product__code") or "",
-                    "batch_number": r.get("batch_lot__batch_no") or "",
-                    "medicine_name": r.get("batch_lot__product__name") or "",
-                    "category": cat_map.get(r.get("batch_lot__product__category_id")) or "",
-                    "manufacturer": r.get("batch_lot__product__manufacturer") or "",
-                    "quantity": float(qty),
-                    "mrp": float(r.get("batch_lot__product__mrp") or 0),
-                    "expiry_date": r.get("batch_lot__expiry_date"),
-                }
-            )
+            status_txt = "OUT_OF_STOCK"
+            product_id = r.get("batch_lot__product_id")
+            reorder = None
+            try:
+                from apps.catalog.models import Product
+                prod = Product.objects.filter(id=product_id).only("reorder_level").first()
+                reorder = prod.reorder_level if prod else None
+            except Exception:
+                prod = None
+            if qty > 0 and (reorder is None or qty > reorder):
+                status_txt = "IN_STOCK"
+            elif qty > 0:
+                status_txt = "LOW_STOCK"
+            row = {
+                "id": r["batch_lot_id"],
+                "medicine_id": r.get("batch_lot__product__code") or "",
+                "batch_number": r.get("batch_lot__batch_no") or "",
+                "medicine_name": r.get("batch_lot__product__name") or "",
+                "category": cat_map.get(r.get("batch_lot__product__category_id")) or "",
+                "manufacturer": r.get("batch_lot__product__manufacturer") or "",
+                "quantity": float(qty),
+                "mrp": float(r.get("batch_lot__product__mrp") or 0),
+                "expiry_date": r.get("batch_lot__expiry_date"),
+                "status": status_txt,
+            }
+            if not status_filter or status_txt == status_filter:
+                out.append(row)
 
         return Response(out)
 
