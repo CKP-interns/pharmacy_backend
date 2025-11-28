@@ -48,6 +48,7 @@ INSTALLED_APPS = [
     'apps.procurement',
     'apps.settingsx',
     'apps.governance',
+    'apps.dashboard',
     
 ]
 

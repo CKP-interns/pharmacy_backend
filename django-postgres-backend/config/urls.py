@@ -25,6 +25,7 @@ urlpatterns = [
     path('api/v1/inventory/', include('apps.inventory.urls')),
     path('api/v1/procurement/', include('apps.procurement.urls')),
     path('api/v1/settings/', include('apps.settingsx.urls')),
+    path('api/v1/dashboard/', include('apps.dashboard.urls')),
     path('api/v1/masters/', include('apps.settingsx.masters_urls')),
     path('api/v1/governance/', include('apps.governance.urls')),
     # OpenAPI schema + Swagger UI
