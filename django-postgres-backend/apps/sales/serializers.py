@@ -1,11 +1,13 @@
 from rest_framework import serializers
 from decimal import Decimal, ROUND_HALF_UP
+from django.db.models import Sum
 from .models import SalesInvoice, SalesLine, SalesPayment
 from apps.catalog.models import Product, BatchLot
 from apps.customers.models import Customer
-from apps.settingsx.models import PaymentMethod
+from apps.settingsx.models import PaymentMethod, TaxBillingSettings
 from apps.customers.serializers import CustomerSerializer
 from django.utils import timezone
+from apps.inventory.services import stock_on_hand
 
 AMOUNT_QUANT = Decimal("0.0001")
 CURRENCY_QUANT = Decimal("0.01")
@@ -19,6 +21,10 @@ class SalesLineSerializer(serializers.ModelSerializer):
         model = SalesLine
         fields = "__all__"
         read_only_fields = ("line_total", "tax_amount", "sale_invoice")
+        extra_kwargs = {
+            "sold_uom": {"required": False},
+            "batch_lot": {"required": False},
+        }
        
     def validate(self, data):
         prod = data.get("product")
@@ -131,6 +137,10 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
         return data
 
     def _compute_totals_and_create_lines(self, invoice, lines):
+        settings = TaxBillingSettings.objects.first()
+        default_pct = Decimal(str(settings.gst_rate)) if settings and settings.gst_rate is not None else Decimal("0")
+        calc_method = (settings.calc_method if settings else "INCLUSIVE").upper()
+
         gross = Decimal("0")
         discount_total = Decimal("0")
         tax_total = Decimal("0")
@@ -140,21 +150,26 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
             qty = Decimal(ln["qty_base"])
             rate = Decimal(ln["rate_per_base"])
             disc_amt = Decimal(ln.get("discount_amount", 0))
-            taxable = (qty * rate) - disc_amt
-
+            pct = Decimal(ln.get("tax_percent") or default_pct)
+            # Inclusive/exclusive handling
+            line_gross = qty * rate
+            taxable = (line_gross - disc_amt)
+            if calc_method == "INCLUSIVE" and pct > 0:
+                taxable = (taxable / (Decimal("1") + pct / Decimal("100"))).quantize(AMOUNT_QUANT, rounding=ROUND_HALF_UP)
             tax_amt = (
-                taxable * Decimal(ln.get("tax_percent", 0)) / Decimal("100")
+                taxable * pct / Decimal("100")
             ).quantize(AMOUNT_QUANT, rounding=ROUND_HALF_UP)
             line_total = (taxable + tax_amt).quantize(
                 AMOUNT_QUANT, rounding=ROUND_HALF_UP
             )
 
+            ln["tax_percent"] = pct
             ln["tax_amount"] = tax_amt
             ln["line_total"] = line_total
 
             SalesLine.objects.create(sale_invoice=invoice, **ln)
 
-            gross += qty * rate
+            gross += line_gross
             discount_total += disc_amt
             tax_total += tax_amt
             net += line_total
@@ -214,6 +229,36 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
             is_active=True,
         )
 
+    def _allocate_fefo(self, product: Product, ln: dict, location_id: int | None):
+        qty_needed = Decimal(ln.get("qty_base") or 0)
+        if qty_needed <= 0 or not location_id:
+            return [ln]
+        batches = (
+            BatchLot.objects.filter(product=product)
+            .order_by("expiry_date", "id")
+        )
+        allocations = []
+        remaining = qty_needed
+        for batch in batches:
+            available = stock_on_hand(location_id, batch.id)
+            if available <= 0:
+                continue
+            take = min(available, remaining)
+            if take <= 0:
+                continue
+            new_ln = dict(ln)
+            new_ln["batch_lot"] = batch
+            new_ln["qty_base"] = take
+            allocations.append(new_ln)
+            remaining -= take
+            if remaining <= 0:
+                break
+        if remaining > 0:
+            raise serializers.ValidationError(
+                {"detail": f"Insufficient stock for {product.name}. Need {qty_needed}, available {qty_needed-remaining}."}
+            )
+        return allocations
+
     def create(self, validated_data):
         lines = validated_data.pop("lines", [])
 
@@ -234,9 +279,21 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
         # Create invoice (initially draft)
         invoice = SalesInvoice.objects.create(**validated_data)
 
+        # FEFO allocation if batch not supplied
+        allocated_lines = []
+        location_id = validated_data.get("location_id") or validated_data.get("location").id if validated_data.get("location") else None
+        for ln in lines:
+            ln.setdefault("sold_uom", "BASE")
+            batch = ln.get("batch_lot")
+            product = ln.get("product")
+            if not batch and product:
+                allocated_lines.extend(self._allocate_fefo(product, ln, location_id))
+            else:
+                allocated_lines.append(ln)
+
         # Compute line totals & create SalesLine rows
         gross, disc, tax, net, round_off = self._compute_totals_and_create_lines(
-            invoice, lines
+            invoice, allocated_lines
         )
 
         invoice.gross_total = gross

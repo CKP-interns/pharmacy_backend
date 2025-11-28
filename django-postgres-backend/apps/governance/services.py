@@ -17,8 +17,15 @@ def audit(
     after: dict | None = None,
     meta: dict | None = None,
 ) -> None:
+    actor_ref = None
+    try:
+        from apps.accounts.models import User as AccountsUser  # type: ignore
+        if isinstance(actor, AccountsUser):
+            actor_ref = actor
+    except Exception:
+        actor_ref = None
     AuditLog.objects.create(
-        actor_user=actor if getattr(actor, "id", None) else None,
+        actor_user=actor_ref if getattr(actor_ref, "id", None) else None,
         action=action,
         table_name=table,
         record_id=str(row_id),

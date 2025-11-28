@@ -4,7 +4,7 @@ from django.db.models import Sum
 
 from apps.catalog.models import BatchLot, Product
 from apps.catalog.services import packs_to_base
-from apps.inventory.services import write_movement
+from apps.inventory.services import write_movement, convert_quantity_to_base
 from apps.inventory.models import RackRule
 from .models import (
     Purchase, PurchaseLine, VendorReturn, GoodsReceipt, GoodsReceiptLine, PurchaseOrder, PurchaseOrderLine,
@@ -117,7 +117,20 @@ def post_goods_receipt(grn_id: int, actor) -> None:
         if changed:
             batch.save()
 
-        qty_base = packs_to_base(product.id, Decimal(ln.qty_packs_received))
+        qty_base = ln.qty_base_received
+        if qty_base in (None, 0):
+            try:
+                qty_base, _ = convert_quantity_to_base(
+                    quantity=Decimal(str(ln.qty_packs_received or 0)),
+                    base_uom=product.base_uom,
+                    selling_uom=product.selling_uom,
+                    quantity_uom=product.selling_uom,
+                    units_per_pack=product.units_per_pack or Decimal("1"),
+                    tablets_per_strip=getattr(product, "tablets_per_strip", None),
+                    strips_per_box=getattr(product, "strips_per_box", None),
+                )
+            except Exception:
+                qty_base = packs_to_base(product.id, Decimal(ln.qty_packs_received))
         ln.qty_base_received = qty_base
         ln.save(update_fields=["qty_base_received"])
         write_movement(

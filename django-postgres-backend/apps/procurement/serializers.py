@@ -184,6 +184,7 @@ class GoodsReceiptLineSerializer(serializers.ModelSerializer):
         fields = "__all__"
         extra_kwargs = {
             "product": {"required": False, "allow_null": True},
+            "qty_base_received": {"required": False, "allow_null": True},
         }
 
     def validate(self, attrs):
@@ -217,4 +218,15 @@ class GoodsReceiptSerializer(serializers.ModelSerializer):
         for line in lines:
             GoodsReceiptLine.objects.create(grn=grn, **line)
         return grn
+
+    def update(self, instance, validated_data):
+        lines = validated_data.pop("lines", None)
+        for k, v in validated_data.items():
+            setattr(instance, k, v)
+        instance.save()
+        if lines is not None:
+            instance.lines.all().delete()
+            for line in lines:
+                GoodsReceiptLine.objects.create(grn=instance, **line)
+        return instance
 

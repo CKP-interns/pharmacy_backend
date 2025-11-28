@@ -14,6 +14,7 @@ from .models import SalesInvoice, SalesPayment
 from .serializers import SalesInvoiceSerializer, SalesPaymentSerializer
 from . import services
 from apps.settingsx.services import next_doc_number
+from apps.settingsx.models import TaxBillingSettings, DocCounter
 from apps.inventory.models import InventoryMovement
 from apps.catalog.models import Product, BatchLot
 
@@ -29,7 +30,16 @@ class SalesInvoiceViewSet(viewsets.ModelViewSet):
         # create with created_by then ensure invoice_no is generated if not provided
         invoice = serializer.save(created_by=self.request.user)
         if not invoice.invoice_no:
-            invoice.invoice_no = next_doc_number("INVOICE", "INV-", 5)
+            # Ensure DocCounter exists and aligns with TaxBillingSettings
+            settings = TaxBillingSettings.objects.first()
+            prefix = settings.invoice_prefix if settings else "INV-"
+            start_num = settings.invoice_start if settings else 1
+            padding = 4
+            DocCounter.objects.get_or_create(
+                document_type="INVOICE",
+                defaults={"prefix": prefix, "next_number": start_num, "padding_int": padding},
+            )
+            invoice.invoice_no = next_doc_number("INVOICE", prefix=prefix, padding=padding)
             invoice.save(update_fields=["invoice_no"])
 
     def destroy(self, request, *args, **kwargs):
