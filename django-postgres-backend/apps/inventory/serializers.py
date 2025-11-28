@@ -33,6 +33,14 @@ class RackLocationSerializer(serializers.ModelSerializer):
         desc = attrs.get("description")
         if desc and len(desc) > 512:
             raise serializers.ValidationError({"description": "Max 512 chars."})
+        max_capacity = attrs.get("max_capacity", getattr(self.instance, "max_capacity", None))
+        current_capacity = attrs.get("current_capacity", getattr(self.instance, "current_capacity", 0))
+        if max_capacity is not None and max_capacity < 0:
+            raise serializers.ValidationError({"max_capacity": "Must be non-negative."})
+        if current_capacity is not None and current_capacity < 0:
+            raise serializers.ValidationError({"current_capacity": "Must be non-negative."})
+        if max_capacity is not None and current_capacity is not None and current_capacity > max_capacity:
+            raise serializers.ValidationError({"current_capacity": "Cannot exceed max_capacity."})
         qs = RackLocation.objects.filter(name__iexact=name)
         if self.instance:
             qs = qs.exclude(pk=self.instance.pk)

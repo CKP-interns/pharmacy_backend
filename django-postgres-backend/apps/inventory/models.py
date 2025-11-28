@@ -58,6 +58,8 @@ class RackRule(models.Model):
 class RackLocation(models.Model):
     name = models.CharField(max_length=120, unique=True)
     description = models.CharField(max_length=512, null=True, blank=True)
+    max_capacity = models.PositiveIntegerField(null=True, blank=True, help_text="Optional maximum capacity for the rack")
+    current_capacity = models.PositiveIntegerField(default=0, help_text="Current occupied capacity units")
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
