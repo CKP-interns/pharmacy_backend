@@ -1,0 +1,89 @@
+from decimal import Decimal
+from datetime import date, timedelta
+
+from django.contrib.auth import get_user_model
+from rest_framework import status
+from rest_framework.test import APITestCase
+
+from apps.catalog.models import ProductCategory, Product, MedicineForm, Uom, BatchLot
+from apps.inventory.models import InventoryMovement, RackLocation
+from apps.locations.models import Location
+
+
+class MedicinesListViewTests(APITestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(username="invtester", password="pass123", is_staff=True)
+        self.client.force_authenticate(self.user)
+        self.location = Location.objects.create(code="LOC1", name="Main")
+        self.category = ProductCategory.objects.create(name="Analgesics")
+        self.form = MedicineForm.objects.create(name="Tablet")
+        self.uom_tab = Uom.objects.create(name="TAB")
+        self.rack = RackLocation.objects.create(name="Rack A")
+
+        self.product = Product.objects.create(
+            code="P001",
+            name="Paracetamol",
+            category=self.category,
+            medicine_form=self.form,
+            mrp=Decimal("50.00"),
+            base_unit="TAB",
+            pack_unit="TAB",
+            units_per_pack=Decimal("1.000"),
+            base_unit_step=Decimal("1.000"),
+            gst_percent=Decimal("5.00"),
+            reorder_level=Decimal("5.000"),
+            base_uom=self.uom_tab,
+            selling_uom=self.uom_tab,
+            rack_location=self.rack,
+        )
+        self.batch = BatchLot.objects.create(
+            product=self.product,
+            batch_no="B1",
+            expiry_date=date.today() + timedelta(days=365),
+            status=BatchLot.Status.ACTIVE,
+        )
+        InventoryMovement.objects.create(
+            location=self.location,
+            batch_lot=self.batch,
+            qty_change_base=Decimal("10.000"),
+            reason=InventoryMovement.Reason.PURCHASE,
+            ref_doc_type="TEST",
+            ref_doc_id=1,
+        )
+
+    def test_list_requires_location_and_returns_status(self):
+        url = "/api/v1/inventory/medicines/"
+        resp_missing = self.client.get(url)
+        self.assertEqual(resp_missing.status_code, status.HTTP_400_BAD_REQUEST)
+
+        resp = self.client.get(url, {"location_id": self.location.id})
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(resp.data), 1)
+        self.assertEqual(resp.data[0]["status"], "IN_STOCK")
+
+    def test_filters_by_category_and_status(self):
+        url = "/api/v1/inventory/medicines/"
+        # Low stock scenario
+        InventoryMovement.objects.create(
+            location=self.location,
+            batch_lot=self.batch,
+            qty_change_base=Decimal("-8.000"),
+            reason=InventoryMovement.Reason.ADJUSTMENT,
+            ref_doc_type="TEST",
+            ref_doc_id=2,
+        )
+        resp = self.client.get(url, {"location_id": self.location.id, "status": "LOW_STOCK"})
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(resp.data), 1)
+        self.assertEqual(resp.data[0]["status"], "LOW_STOCK")
+
+        resp_cat = self.client.get(
+            url, {"location_id": self.location.id, "category_id": self.category.id}
+        )
+        self.assertEqual(resp_cat.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(resp_cat.data), 1)
+
+        resp_none = self.client.get(url, {"location_id": self.location.id, "category_id": 999})
+        self.assertEqual(resp_none.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(resp_none.data), 0)
