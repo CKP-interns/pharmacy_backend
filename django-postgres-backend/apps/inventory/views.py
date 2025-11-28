@@ -18,6 +18,7 @@ from apps.settingsx.services import get_setting
 from django.db import transaction
 from apps.inventory.models import BatchStock
 from apps.settingsx.utils import get_stock_thresholds
+from apps.settingsx.models import SettingKV
 
 
 class HealthView(APIView):
@@ -206,6 +207,59 @@ class ExpiringView(APIView):
             days = int(get_setting("ALERT_EXPIRY_WARNING_DAYS", "60") or 60)
         data = near_expiry(days=days, location_id=request.query_params.get("location_id"))
         return Response(data)
+
+
+class ExpiryAlertsView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(
+        tags=["Inventory"],
+        summary="Expiry alerts with configurable thresholds",
+        parameters=[
+            OpenApiParameter("location_id", OpenApiTypes.INT, OpenApiParameter.QUERY, required=False),
+            OpenApiParameter("bucket", OpenApiTypes.STR, OpenApiParameter.QUERY, description="critical|warning|safe|all"),
+        ],
+        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
+    )
+    def get(self, request):
+        location_id = request.query_params.get("location_id")
+        bucket = (request.query_params.get("bucket") or "all").lower()
+
+        crit_days = int(get_setting("ALERT_EXPIRY_CRITICAL_DAYS", "30") or 30)
+        warn_days = int(get_setting("ALERT_EXPIRY_WARNING_DAYS", "60") or 60)
+        rows = near_expiry(days=warn_days, location_id=location_id)
+        today = date.today()
+
+        summary = {"critical": 0, "warning": 0, "safe": 0}
+        items = []
+
+        for r in rows:
+            exp = r.get("expiry_date")
+            days_left = (exp - today).days if exp else None
+            status_txt = "safe"
+            if days_left is None:
+                status_txt = "safe"
+            elif days_left <= crit_days:
+                status_txt = "critical"
+            elif days_left <= warn_days:
+                status_txt = "warning"
+
+            summary[status_txt] += 1
+            if bucket != "all" and status_txt != bucket:
+                continue
+            items.append(
+                {
+                    "product_id": r.get("product_id"),
+                    "batch_lot_id": r.get("batch_lot_id"),
+                    "batch_no": r.get("batch_no"),
+                    "expiry_date": exp,
+                    "days_left": days_left,
+                    "status": status_txt.upper(),
+                    "quantity_base": float(r.get("stock_base") or 0),
+                }
+            )
+
+        return Response({"summary": summary, "items": items})
 
 
 class InventoryStatsView(APIView):
