@@ -528,11 +528,11 @@ class PurchasePDFImportView(APIView):
             vendor = get_object_or_404(Vendor, pk=vendor_id)
             location = get_object_or_404(Location, pk=location_id)
 
-            # Save temp PDF
+            # TEMP SAVE PDF
             tmp_path = default_storage.save(f"temp_pdfs/{file.name}", file)
             tmp_full_path = default_storage.path(tmp_path)
 
-            # Extract items
+            # PDF PARSE
             items = extract_purchase_items_from_pdf(tmp_full_path)
             if not items:
                 return Response({"detail": "no items extracted from PDF"}, status=status.HTTP_400_BAD_REQUEST)
@@ -541,6 +541,7 @@ class PurchasePDFImportView(APIView):
             total_amount = Decimal("0.00")
 
             with transaction.atomic():
+
                 po = PurchaseOrder.objects.create(
                     vendor=vendor,
                     location=location,
@@ -554,9 +555,9 @@ class PurchasePDFImportView(APIView):
                     code = (it.get("product_code") or "").strip()
                     name = (it.get("name") or "").strip()
 
-                    # ----------------------------------------------------
+                    # -----------------------------------------
                     # PRODUCT LOOKUP
-                    # ----------------------------------------------------
+                    # -----------------------------------------
                     product = None
 
                     if code:
@@ -572,16 +573,19 @@ class PurchasePDFImportView(APIView):
                         first_token = name.split()[0]
                         product = Product.objects.filter(name__icontains=first_token).first()
 
-                    # ----------------------------------------------------
+                    # -----------------------------------------
                     # PRODUCT CREATE IF NOT FOUND
-                    # ----------------------------------------------------
+                    # -----------------------------------------
                     if not product:
 
                         base_unit_raw = it.get("base_unit") or ""
                         pack_unit_raw = it.get("pack_unit") or ""
                         units_per_pack_raw = it.get("units_per_pack") or 1
 
-                        # Resolve UOM safely
+                        # Auto-generate product code based on name + digits + units
+                        code = generate_product_code(name, units_per_pack_raw)
+
+                        # Resolve UOMs
                         base_uom = None
                         selling_uom = None
 
@@ -592,7 +596,7 @@ class PurchasePDFImportView(APIView):
                             selling_uom = Uom.objects.filter(name__iexact=pack_unit_raw).first()
 
                         product = Product.objects.create(
-                            code=code or None,
+                            code=code,                      # <<< FIXED CODE GENERATION
                             name=name or "UNKNOWN",
                             generic_name="",
                             dosage_strength="",
@@ -606,18 +610,16 @@ class PurchasePDFImportView(APIView):
                             manufacturer="",
                             mrp=Decimal(it.get("mrp") or 0),
 
-                            # CHAR fields
                             base_unit=base_unit_raw or "",
                             pack_unit=pack_unit_raw or "",
-
                             units_per_pack=Decimal(units_per_pack_raw),
 
                             preferred_vendor=vendor,
                         )
 
-                    # ----------------------------------------------------
+                    # -----------------------------------------
                     # PARSE NUMERIC FIELDS
-                    # ----------------------------------------------------
+                    # -----------------------------------------
                     qty_raw = it.get("qty") or 0
                     rate_raw = it.get("rate") or 0
                     net_value_raw = it.get("net_value") or 0
@@ -637,9 +639,9 @@ class PurchasePDFImportView(APIView):
                     except:
                         net_value = expected_unit_cost * qty_packs
 
-                    # ----------------------------------------------------
+                    # -----------------------------------------
                     # CREATE PO LINE
-                    # ----------------------------------------------------
+                    # -----------------------------------------
                     PurchaseOrderLine.objects.create(
                         po=po,
                         product=product,
@@ -652,15 +654,15 @@ class PurchasePDFImportView(APIView):
                     total_amount += net_value
                     created_lines += 1
 
-                # ----------------------------------------------------
-                # UPDATE PO TOTAL
-                # ----------------------------------------------------
+                # -----------------------------------------
+                # UPDATE TOTALS
+                # -----------------------------------------
                 po.net_total = total_amount
                 po.save()
 
-                # AUTO RECEIVE PLACEHOLDER
+                # auto-receive placeholder
                 if auto_receive and created_lines:
-                    logger.info("auto_receive requested but implementation is project-specific")
+                    logger.info("auto_receive requested but not implemented.")
 
             return Response({
                 "message": "imported",
@@ -678,12 +680,27 @@ class PurchasePDFImportView(APIView):
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         finally:
-            if tmp_path:
-                try:
-                    if default_storage.exists(tmp_path):
-                        default_storage.delete(tmp_path)
-                except:
-                    pass
+            if tmp_path and default_storage.exists(tmp_path):
+                default_storage.delete(tmp_path)
+
+
+def generate_product_code(name, units_per_pack):
+    # NAME PART (first 4 letters uppercase)
+    name_part = ''.join([c for c in name if c.isalpha()])[:4].upper()
+    if not name_part:
+        name_part = "PRD"
+
+    # DIGITS FROM NAME
+    digits = ''.join([c for c in name if c.isdigit()])
+
+    # Fall back to no digits if name has none
+    if not digits:
+        digits = "0"
+
+    # UNITS PER PACK
+    up = str(units_per_pack)
+
+    return f"{name_part}{digits}{up}"
 
 
 

@@ -1,4 +1,6 @@
 from django.db import models
+from django.contrib.auth import get_user_model
+User = get_user_model()
 
 
 class Vendor(models.Model):
@@ -179,7 +181,13 @@ class GoodsReceipt(models.Model):
     po = models.ForeignKey(PurchaseOrder, on_delete=models.PROTECT)
     location = models.ForeignKey('locations.Location', on_delete=models.PROTECT)
     received_at = models.DateTimeField(null=True, blank=True)
-    received_by = models.ForeignKey('accounts.User', on_delete=models.SET_NULL, null=True, blank=True)
+    received_by = models.ForeignKey(
+    User,
+    on_delete=models.SET_NULL,
+    null=True,
+    blank=True,
+    related_name="goods_receipts"
+)
     supplier_invoice_no = models.CharField(max_length=64, blank=True)
     supplier_invoice_date = models.DateField(null=True, blank=True)
     note = models.TextField(blank=True)

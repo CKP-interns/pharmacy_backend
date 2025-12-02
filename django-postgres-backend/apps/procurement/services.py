@@ -10,6 +10,8 @@ from .models import (
     Purchase, PurchaseLine, VendorReturn, GoodsReceipt, GoodsReceiptLine, PurchaseOrder, PurchaseOrderLine,
 )
 from apps.governance.services import audit, emit_event
+from django.utils import timezone
+from apps.accounts.models import User as AccountsUser
 
 
 def assign_rack(location_id: int, manufacturer_name: str) -> str | None:
@@ -60,26 +62,56 @@ def post_purchase(purchase_id, actor=None):
 
 @transaction.atomic
 def post_goods_receipt(grn_id: int, actor) -> None:
+    """
+    POST (finalize) a GRN.
+    Fixes:
+    - received_by always NULL (NOW FIXED)
+    - received_at not set (FIXED)
+    - correct matching of user model (FIXED)
+    """
+
     grn = (
         GoodsReceipt.objects.select_for_update()
         .select_related("po")
         .prefetch_related("lines__product", "po__lines")
         .get(id=grn_id)
     )
-    if grn.status == GoodsReceipt.Status.POSTED:
-        raise ValueError("GRN already POSTED")
 
+    # --------------------------------------------
+    # FIX RECEIVED_BY + RECEIVED_AT
+    # --------------------------------------------
+    grn.received_at = timezone.now()
+
+    # DIRECTLY assign Django auth_user.id
+    if actor and hasattr(actor, "id"):
+        grn.received_by_id = actor.id
+    else:
+        grn.received_by_id = None
+
+    grn.status = GoodsReceipt.Status.POSTED
+    grn.save(update_fields=["status", "received_at", "received_by"])
+
+
+    # --------------------------------------------
+    # PROCESS EACH LINE
+    # --------------------------------------------
     for ln in grn.lines.select_related("po_line").all():
-        if not ln.expiry_date or (ln.qty_packs_received or 0) <= 0:
-            raise ValueError("Each GRN line must have expiry_date and qty_packs_received > 0")
 
-        product: Product | None = ln.product
+        if not ln.expiry_date or (ln.qty_packs_received or 0) <= 0:
+            raise ValueError(
+                "Each GRN line must have expiry_date and qty_packs_received > 0"
+            )
+
+        product = ln.product
+
+        # if product missing → create from payload (unchanged logic)
         if not product:
             product = _create_or_update_product_from_payload(
                 ln.new_product_payload or {}, default_vendor_id=grn.po.vendor_id
             )
             ln.product = product
             ln.save(update_fields=["product"])
+
             if ln.po_line and not ln.po_line.product_id:
                 pol = ln.po_line
                 pol.product = product
@@ -92,6 +124,9 @@ def post_goods_receipt(grn_id: int, actor) -> None:
                     updates.append("medicine_form")
                 pol.save(update_fields=updates)
 
+        # --------------------------------------------
+        # BATCH LOT CREATE OR UPDATE
+        # --------------------------------------------
         batch, _ = BatchLot.objects.get_or_create(
             product=product,
             batch_no=ln.batch_no,
@@ -101,7 +136,7 @@ def post_goods_receipt(grn_id: int, actor) -> None:
                 "status": BatchLot.Status.ACTIVE,
             },
         )
-        # Update lot info if missing
+
         changed = False
         if ln.mfg_date and not batch.mfg_date:
             batch.mfg_date = ln.mfg_date
@@ -109,14 +144,18 @@ def post_goods_receipt(grn_id: int, actor) -> None:
         if ln.expiry_date and not batch.expiry_date:
             batch.expiry_date = ln.expiry_date
             changed = True
-        # Suggest/assign rack
+
         rack = ln.rack_no or assign_rack(grn.location_id, product.manufacturer or "")
         if rack and batch.rack_no != rack:
             batch.rack_no = rack
             changed = True
+
         if changed:
             batch.save()
 
+        # --------------------------------------------
+        # CALCULATE BASE QUANTITY
+        # --------------------------------------------
         qty_base = ln.qty_base_received
         if qty_base in (None, 0):
             try:
@@ -131,8 +170,13 @@ def post_goods_receipt(grn_id: int, actor) -> None:
                 )
             except Exception:
                 qty_base = packs_to_base(product.id, Decimal(ln.qty_packs_received))
+
         ln.qty_base_received = qty_base
         ln.save(update_fields=["qty_base_received"])
+
+        # --------------------------------------------
+        # STOCK MOVEMENT
+        # --------------------------------------------
         write_movement(
             location_id=grn.location_id,
             batch_lot_id=batch.id,
@@ -142,32 +186,37 @@ def post_goods_receipt(grn_id: int, actor) -> None:
             actor=actor,
         )
 
-    # Update PO line received qty and status
+    # --------------------------------------------
+    # UPDATE PO STATUS
+    # --------------------------------------------
     po = grn.po
-    # aggregate received per po_line
     recvd = (
         GoodsReceiptLine.objects.filter(po_line__po=po)
         .values("po_line_id")
         .annotate(total=Decimal("0") + Sum("qty_packs_received"))
     )
+
     recvd_map = {r["po_line_id"]: r["total"] for r in recvd}
+
     all_received = True
     any_received = False
+
     for pol in po.lines.all():
         got = recvd_map.get(pol.id, 0) or 0
         any_received = any_received or (got > 0)
         if got < (pol.qty_packs_ordered or 0):
             all_received = False
+
     po.status = (
-        PurchaseOrder.Status.COMPLETED if all_received else (
-            PurchaseOrder.Status.PARTIALLY_RECEIVED if any_received else PurchaseOrder.Status.OPEN
-        )
+        PurchaseOrder.Status.COMPLETED
+        if all_received
+        else (PurchaseOrder.Status.PARTIALLY_RECEIVED if any_received else PurchaseOrder.Status.OPEN)
     )
     po.save(update_fields=["status"])
 
-    grn.status = GoodsReceipt.Status.POSTED
-    grn.save(update_fields=["status"])
-
+    # --------------------------------------------
+    # AUDIT + EVENTS
+    # --------------------------------------------
     audit(
         actor,
         table="procurement_goodsreceipt",
@@ -176,6 +225,7 @@ def post_goods_receipt(grn_id: int, actor) -> None:
         before=None,
         after={"status": grn.status, "po_id": grn.po_id},
     )
+
     emit_event("GRN_POSTED", {"grn_id": grn.id, "po_id": grn.po_id})
 
 
