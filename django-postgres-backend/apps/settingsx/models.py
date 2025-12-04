@@ -106,13 +106,13 @@ class NotificationSettings(models.Model):
 
 
 class TaxBillingSettings(models.Model):
-    gst_rate = models.DecimalField(max_digits=5, decimal_places=2, default=0)
-    cgst_rate = models.DecimalField(max_digits=5, decimal_places=2, default=0)
-    sgst_rate = models.DecimalField(max_digits=5, decimal_places=2, default=0)
-    calc_method = models.CharField(max_length=16, default="INCLUSIVE")
-    invoice_prefix = models.CharField(max_length=16, default="INV-")
-    invoice_start = models.IntegerField(default=1)
-    invoice_template = models.CharField(max_length=64, default="STANDARD")
+    gst_rate = models.DecimalField(max_digits=5, decimal_places=2, blank=True, null=True)
+    cgst_rate = models.DecimalField(max_digits=5, decimal_places=2, blank=True, null=True)
+    sgst_rate = models.DecimalField(max_digits=5, decimal_places=2, blank=True, null=True)
+    calc_method = models.CharField(max_length=16, blank=True, null=True)
+    invoice_prefix = models.CharField(max_length=16, blank=True, null=True)
+    invoice_start = models.IntegerField(blank=True, null=True)
+    invoice_template = models.CharField(max_length=64, blank=True, null=True)
     invoice_footer = models.CharField(max_length=512, blank=True, null=True)
     updated_at = models.DateTimeField(auto_now=True)
 

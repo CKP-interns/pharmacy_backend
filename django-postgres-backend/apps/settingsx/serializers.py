@@ -99,8 +99,8 @@ class TaxBillingSettingsSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         for fld in ("gst_rate", "cgst_rate", "sgst_rate"):
             val = attrs.get(fld)
-        if val is not None and val < 0:
-            raise serializers.ValidationError({fld: "Must be >= 0"})
+            if val is not None and val < 0:
+                raise serializers.ValidationError({fld: "Must be >= 0"})
         return attrs
 
 

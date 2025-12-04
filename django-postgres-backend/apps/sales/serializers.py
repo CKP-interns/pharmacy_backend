@@ -139,7 +139,7 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
     def _compute_totals_and_create_lines(self, invoice, lines):
         settings = TaxBillingSettings.objects.first()
         default_pct = Decimal(str(settings.gst_rate)) if settings and settings.gst_rate is not None else Decimal("0")
-        calc_method = (settings.calc_method if settings else "INCLUSIVE").upper()
+        calc_method = (settings.calc_method or "INCLUSIVE").upper() if settings else "INCLUSIVE"
 
         gross = Decimal("0")
         discount_total = Decimal("0")

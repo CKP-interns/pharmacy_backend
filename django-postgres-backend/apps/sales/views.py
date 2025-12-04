@@ -32,8 +32,8 @@ class SalesInvoiceViewSet(viewsets.ModelViewSet):
         if not invoice.invoice_no:
             # Ensure DocCounter exists and aligns with TaxBillingSettings
             settings = TaxBillingSettings.objects.first()
-            prefix = settings.invoice_prefix if settings else "INV-"
-            start_num = settings.invoice_start if settings else 1
+            prefix = (settings.invoice_prefix or "INV-") if settings else "INV-"
+            start_num = (settings.invoice_start or 1) if settings else 1
             padding = 4
             DocCounter.objects.get_or_create(
                 document_type="INVOICE",
