@@ -15,6 +15,8 @@ from django.utils import timezone
 
 PRICE_PER_BASE_QUANT = Decimal("0.000001")
 
+PRICE_PER_BASE_QUANT = Decimal("0.000001")
+
 
 def assign_rack(location_id: int, manufacturer_name: str) -> str | None:
     rule = RackRule.objects.filter(location_id=location_id, manufacturer_name__iexact=manufacturer_name, is_active=True).first()
