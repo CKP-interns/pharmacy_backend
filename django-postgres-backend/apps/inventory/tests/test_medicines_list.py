@@ -87,3 +87,68 @@ class MedicinesListViewTests(APITestCase):
         resp_none = self.client.get(url, {"location_id": self.location.id, "category_id": 999})
         self.assertEqual(resp_none.status_code, status.HTTP_200_OK)
         self.assertEqual(len(resp_none.data), 0)
+
+
+class GlobalMedicinesViewTests(APITestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(username="globaltester", password="pass123", is_staff=True)
+        self.client.force_authenticate(self.user)
+        self.location1 = Location.objects.create(code="LOC1", name="Main")
+        self.location2 = Location.objects.create(code="LOC2", name="Branch")
+        category = ProductCategory.objects.create(name="Antibiotics")
+        form = MedicineForm.objects.create(name="Tablet")
+        uom = Uom.objects.create(name="TAB")
+        rack = RackLocation.objects.create(name="Rack B")
+        self.product = Product.objects.create(
+            code="PX100",
+            name="DemoCaps",
+            category=category,
+            medicine_form=form,
+            mrp=Decimal("100.00"),
+            base_unit="TAB",
+            pack_unit="TAB",
+            units_per_pack=Decimal("1.000"),
+            base_unit_step=Decimal("1.000"),
+            gst_percent=Decimal("12.00"),
+            reorder_level=Decimal("10.000"),
+            base_uom=uom,
+            selling_uom=uom,
+            rack_location=rack,
+        )
+        self.batch = BatchLot.objects.create(
+            product=self.product,
+            batch_no="B-GLB",
+            expiry_date=date.today() + timedelta(days=200),
+            status=BatchLot.Status.ACTIVE,
+        )
+        InventoryMovement.objects.create(
+            location=self.location1,
+            batch_lot=self.batch,
+            qty_change_base=Decimal("3.000"),
+            reason=InventoryMovement.Reason.PURCHASE,
+            ref_doc_type="TEST",
+            ref_doc_id=1,
+        )
+        InventoryMovement.objects.create(
+            location=self.location2,
+            batch_lot=self.batch,
+            qty_change_base=Decimal("4.000"),
+            reason=InventoryMovement.Reason.PURCHASE,
+            ref_doc_type="TEST",
+            ref_doc_id=2,
+        )
+
+    def test_global_endpoint_sums_quantities(self):
+        url = "/api/v1/inventory/medicines/global/"
+        resp = self.client.get(url)
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(resp.data), 1)
+        self.assertEqual(resp.data[0]["quantity"], 7.0)
+        self.assertEqual(resp.data[0]["status"], "LOW_STOCK")
+
+    def test_global_endpoint_filters_by_status(self):
+        url = "/api/v1/inventory/medicines/global/"
+        resp = self.client.get(url, {"status": "IN_STOCK"})
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(resp.data), 0)

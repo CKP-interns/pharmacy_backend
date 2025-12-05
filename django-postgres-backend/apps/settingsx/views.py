@@ -41,6 +41,65 @@ class BusinessProfileView(generics.RetrieveUpdateAPIView):
         return obj
 
 
+def _build_group_settings() -> dict:
+    keys = {
+        "alerts": [
+            "ALERT_EXPIRY_CRITICAL_DAYS",
+            "ALERT_EXPIRY_WARNING_DAYS",
+            "ALERT_LOW_STOCK_DEFAULT",
+            "ALERT_CHECK_FREQUENCY",
+            "AUTO_REMOVE_EXPIRED",
+            "OUT_OF_STOCK_ACTION",
+        ],
+        "tax": [
+            "TAX_GST_RATE",
+            "TAX_CGST_RATE",
+            "TAX_SGST_RATE",
+            "TAX_CALC_METHOD",
+        ],
+        "invoice": [
+            "INVOICE_PREFIX",
+            "INVOICE_START",
+            "INVOICE_TEMPLATE",
+            "INVOICE_FOOTER",
+        ],
+        "notifications": [
+            "NOTIFY_EMAIL_ENABLED",
+            "NOTIFY_LOW_STOCK",
+            "NOTIFY_EXPIRY",
+            "NOTIFY_DAILY_REPORT",
+            "NOTIFY_EMAIL",
+            "NOTIFY_SMS_ENABLED",
+            "NOTIFY_SMS_PHONE",
+            "SMTP_HOST",
+            "SMTP_PORT",
+            "SMTP_USER",
+            "SMTP_PASSWORD",
+        ],
+        "backups": [
+            "AUTO_BACKUP_ENABLED",
+            "AUTO_BACKUP_FREQUENCY",
+            "AUTO_BACKUP_TIME",
+        ],
+    }
+    data = {}
+    for group, items in keys.items():
+        data[group] = {k: SettingKV.objects.filter(key=k).values_list("value", flat=True).first() for k in items}
+
+    alerts_obj = AlertThresholds.objects.first()
+    if alerts_obj:
+        alerts = data.get("alerts", {})
+        alerts.update(
+            {
+                "ALERT_EXPIRY_CRITICAL_DAYS": str(alerts_obj.critical_expiry_days),
+                "ALERT_EXPIRY_WARNING_DAYS": str(alerts_obj.warning_expiry_days),
+                "ALERT_LOW_STOCK_DEFAULT": str(alerts_obj.low_stock_default),
+            }
+        )
+        data["alerts"] = alerts
+    return data
+
+
 class SettingsGroupView(APIView):
     @extend_schema(
         tags=["Settings"],
@@ -48,65 +107,7 @@ class SettingsGroupView(APIView):
         responses={200: OpenApiTypes.OBJECT},
     )
     def get(self, request):
-        # Grouped read convenience for UI
-        keys = {
-            "alerts": [
-                "ALERT_EXPIRY_CRITICAL_DAYS",
-                "ALERT_EXPIRY_WARNING_DAYS",
-                "ALERT_LOW_STOCK_DEFAULT",
-                "ALERT_CHECK_FREQUENCY",
-                "AUTO_REMOVE_EXPIRED",
-                "OUT_OF_STOCK_ACTION",
-            ],
-            "tax": [
-                "TAX_GST_RATE",
-                "TAX_CGST_RATE",
-                "TAX_SGST_RATE",
-                "TAX_CALC_METHOD",
-            ],
-            "invoice": [
-                "INVOICE_PREFIX",
-                "INVOICE_START",
-                "INVOICE_TEMPLATE",
-                "INVOICE_FOOTER",
-            ],
-            "notifications": [
-                "NOTIFY_EMAIL_ENABLED",
-                "NOTIFY_LOW_STOCK",
-                "NOTIFY_EXPIRY",
-                "NOTIFY_DAILY_REPORT",
-                "NOTIFY_EMAIL",
-                "NOTIFY_SMS_ENABLED",
-                "NOTIFY_SMS_PHONE",
-                "SMTP_HOST",
-                "SMTP_PORT",
-                "SMTP_USER",
-                "SMTP_PASSWORD",
-            ],
-            "backups": [
-                "AUTO_BACKUP_ENABLED",
-                "AUTO_BACKUP_FREQUENCY",
-                "AUTO_BACKUP_TIME",
-            ],
-        }
-        data = {}
-        for group, items in keys.items():
-            data[group] = {k: SettingKV.objects.filter(key=k).values_list("value", flat=True).first() for k in items}
-
-        # Overlay values from structured settings models so UI sees the actual values
-        alerts_obj = AlertThresholds.objects.first()
-        if alerts_obj:
-            alerts = data.get("alerts", {})
-            alerts.update(
-                {
-                    "ALERT_EXPIRY_CRITICAL_DAYS": str(alerts_obj.critical_expiry_days),
-                    "ALERT_EXPIRY_WARNING_DAYS": str(alerts_obj.warning_expiry_days),
-                    "ALERT_LOW_STOCK_DEFAULT": str(alerts_obj.low_stock_default),
-                }
-            )
-            data["alerts"] = alerts
-
-        return Response(data)
+        return Response(_build_group_settings())
 
 
 class SettingsGroupSaveView(APIView):
@@ -171,7 +172,7 @@ class SettingsGroupSaveView(APIView):
                 if group == "alerts" and k in {"ALERT_EXPIRY_CRITICAL_DAYS", "ALERT_EXPIRY_WARNING_DAYS", "ALERT_LOW_STOCK_DEFAULT"}:
                     continue
                 to_write[str(k)] = str(v)
-        if not to_write:
+        if not to_write and not alerts_payload:
             return Response({"updated": 0})
         from django.db import transaction
         from .services import set_setting, get_setting
@@ -188,7 +189,10 @@ class SettingsGroupSaveView(APIView):
                     before={"key": k, "value": before},
                     after={"key": k, "value": v},
                 )
-        return self.get(request)
+        return Response(_build_group_settings())
+
+    def get(self, request):
+        return Response(_build_group_settings())
 
 
 class DocCounterViewSet(viewsets.ModelViewSet):

@@ -7,7 +7,16 @@ from datetime import date
 from decimal import Decimal
 
 from apps.catalog.models import BatchLot, ProductCategory, Product
-from .services import stock_on_hand, write_movement, low_stock, near_expiry, inventory_stats, stock_summary, stock_status_for_quantity
+from .services import (
+    stock_on_hand,
+    write_movement,
+    low_stock,
+    near_expiry,
+    inventory_stats,
+    stock_summary,
+    stock_status_for_quantity,
+    global_inventory_rows,
+)
 from .models import RackLocation, InventoryMovement
 from .serializers import (
     RackLocationSerializer,
@@ -583,23 +592,26 @@ class MedicinesListView(APIView):
             c.id: c.name for c in ProductCategory.objects.filter(id__in=cat_ids)
         } if cat_ids else {}
 
+        product_ids = {r.get("batch_lot__product_id") for r in base_qs if r.get("batch_lot__product_id")}
+        reorder_map = {
+            p.id: p.reorder_level for p in Product.objects.filter(id__in=product_ids).only("reorder_level")
+        } if product_ids else {}
+        low_default, _ = get_stock_thresholds()
+        default_threshold = Decimal(str(low_default)) if low_default else None
+
         out = []
         for r in base_qs:
             qty = r.get("quantity") or Decimal("0")
             # include zero and negative as Out of Stock rows so UI can still show them
             status_txt = "OUT_OF_STOCK"
             product_id = r.get("batch_lot__product_id")
-            reorder = None
-            try:
-                from apps.catalog.models import Product
-                prod = Product.objects.filter(id=product_id).only("reorder_level").first()
-                reorder = prod.reorder_level if prod else None
-            except Exception:
-                prod = None
-            if qty > 0 and (reorder is None or qty > reorder):
-                status_txt = "IN_STOCK"
-            elif qty > 0:
-                status_txt = "LOW_STOCK"
+            reorder = reorder_map.get(product_id)
+            threshold = reorder if reorder and reorder > 0 else default_threshold
+            if qty > 0:
+                if threshold and qty <= threshold:
+                    status_txt = "LOW_STOCK"
+                else:
+                    status_txt = "IN_STOCK"
             row = {
                 "id": r["batch_lot_id"],
                 "medicine_id": r.get("batch_lot__product__code") or "",
@@ -616,6 +628,38 @@ class MedicinesListView(APIView):
                 out.append(row)
 
         return Response(out)
+
+
+class GlobalMedicinesView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(
+        tags=["Inventory"],
+        summary="List inventory batches across all locations",
+        parameters=[
+            OpenApiParameter("q", OpenApiTypes.STR, OpenApiParameter.QUERY, description="Search by code/name/batch"),
+            OpenApiParameter("category_id", OpenApiTypes.INT, OpenApiParameter.QUERY),
+            OpenApiParameter("status", OpenApiTypes.STR, OpenApiParameter.QUERY),
+            OpenApiParameter("rack_id", OpenApiTypes.INT, OpenApiParameter.QUERY, description="Rack location id"),
+            OpenApiParameter("location_id", OpenApiTypes.INT, OpenApiParameter.QUERY),
+        ],
+        responses={200: OpenApiTypes.OBJECT},
+    )
+    def get(self, request):
+        def _int_or_none(value):
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+
+        data = global_inventory_rows(
+            search=request.query_params.get("q"),
+            category_id=_int_or_none(request.query_params.get("category_id")),
+            rack_id=_int_or_none(request.query_params.get("rack_id")),
+            status=(request.query_params.get("status") or "").upper() or None,
+            location_id=_int_or_none(request.query_params.get("location_id")),
+        )
+        return Response(data)
 
 
 class RackLocationViewSet(viewsets.ModelViewSet):

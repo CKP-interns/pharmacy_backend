@@ -13,6 +13,7 @@ from .views import (
     StockSummaryView,
     AddMedicineView,
     MedicinesListView,
+    GlobalMedicinesView,
 )
 from rest_framework.routers import DefaultRouter
 
@@ -33,6 +34,7 @@ urlpatterns = [
     path('stats/', InventoryStatsView.as_view(), name='inventory-stats'),
     path('add-medicine/', AddMedicineView.as_view(), name='inventory-add-medicine'),
     path('medicines/', MedicinesListView.as_view(), name='inventory-medicines'),
+    path('medicines/global/', GlobalMedicinesView.as_view(), name='inventory-medicines-global'),
 ]
 
 urlpatterns += router.urls

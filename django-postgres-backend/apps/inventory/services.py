@@ -9,6 +9,7 @@ from .models import InventoryMovement
 from apps.catalog.models import BatchLot, Product
 from apps.locations.models import Location
 from apps.settingsx.services import get_setting
+from apps.settingsx.utils import get_stock_thresholds
 
 
 def stock_on_hand(location_id: int, batch_lot_id: int) -> Decimal:
@@ -89,10 +90,26 @@ def convert_quantity_to_base(
     return Decimal(quantity) * factor, factor
 
 
+def _resolve_thresholds(reorder_level: Decimal | None) -> tuple[Decimal | None, Decimal | None]:
+    low_default, critical_default = get_stock_thresholds()
+    low_threshold: Decimal | None = None
+    if reorder_level is not None and Decimal(reorder_level) > 0:
+        low_threshold = Decimal(reorder_level)
+    elif low_default is not None:
+        low_threshold = Decimal(str(low_default))
+    critical_threshold: Decimal | None = None
+    if critical_default:
+        critical_threshold = Decimal(str(critical_default))
+    return low_threshold, critical_threshold
+
+
 def stock_status_for_quantity(qty_base: Decimal, reorder_level: Decimal | None) -> str:
     if qty_base is None or qty_base <= 0:
         return "OUT_OF_STOCK"
-    if reorder_level is not None and qty_base <= reorder_level:
+    low_threshold, critical_threshold = _resolve_thresholds(reorder_level)
+    if low_threshold is None:
+        return "IN_STOCK"
+    if qty_base <= low_threshold:
         return "LOW_STOCK"
     return "IN_STOCK"
 
@@ -229,17 +246,18 @@ def low_stock(location_id):
     )
     product_ids = [r["batch_lot__product_id"] for r in agg]
     products = {p.id: p for p in Product.objects.filter(id__in=product_ids)}
+    low_default, _ = get_stock_thresholds()
     try:
-        default_low = Decimal(get_setting("ALERT_LOW_STOCK_DEFAULT", "50") or "50")
+        default_low = Decimal(str(low_default or 0))
     except Exception:
-        default_low = Decimal("50")
+        default_low = Decimal("0")
     result = []
     for r in agg:
         p = products.get(r["batch_lot__product_id"])
         if not p:
             continue
-        threshold = p.reorder_level if p.reorder_level is not None else default_low
-        if r["stock_base"] is not None and threshold is not None and r["stock_base"] <= threshold:
+        threshold = p.reorder_level if p.reorder_level and p.reorder_level > 0 else default_low
+        if threshold and r["stock_base"] is not None and r["stock_base"] <= threshold:
             result.append(
                 {
                     "product_id": p.id,
@@ -250,6 +268,91 @@ def low_stock(location_id):
                 }
             )
     return result
+
+
+def global_inventory_rows(
+    *,
+    search: str | None = None,
+    category_id: int | None = None,
+    rack_id: int | None = None,
+    status: str | None = None,
+    location_id: int | None = None,
+) -> list[dict]:
+    qs = (
+        InventoryMovement.objects.select_related(
+            "batch_lot",
+            "batch_lot__product",
+            "batch_lot__product__category",
+            "batch_lot__product__rack_location",
+            "batch_lot__product__base_uom",
+        )
+        .filter(batch_lot__product__is_active=True)
+    )
+    if location_id:
+        qs = qs.filter(location_id=location_id)
+    if category_id:
+        qs = qs.filter(batch_lot__product__category_id=category_id)
+    if rack_id:
+        qs = qs.filter(batch_lot__product__rack_location_id=rack_id)
+    if search:
+        from django.db.models import Q
+
+        search = search.strip()
+        if search:
+            qs = qs.filter(
+                Q(batch_lot__product__name__icontains=search)
+                | Q(batch_lot__product__code__icontains=search)
+                | Q(batch_lot__batch_no__icontains=search)
+                | Q(batch_lot__product__generic_name__icontains=search)
+            )
+
+    grouped = (
+        qs.values(
+            "batch_lot_id",
+            "batch_lot__batch_no",
+            "batch_lot__expiry_date",
+            "batch_lot__rack_no",
+            "batch_lot__product__id",
+            "batch_lot__product__code",
+            "batch_lot__product__name",
+            "batch_lot__product__generic_name",
+            "batch_lot__product__category__name",
+            "batch_lot__product__category_id",
+            "batch_lot__product__reorder_level",
+            "batch_lot__product__mrp",
+            "batch_lot__product__base_uom__name",
+            "batch_lot__product__rack_location__name",
+            "batch_lot__product__rack_location_id",
+        )
+        .annotate(total_qty=Sum("qty_change_base"))
+    )
+
+    status_filter = (status or "").upper()
+    results: list[dict] = []
+    for row in grouped:
+        qty = Decimal(row.get("total_qty") or 0)
+        status_txt = stock_status_for_quantity(qty, row.get("batch__product__reorder_level"))
+        if status_filter and status_txt != status_filter:
+            continue
+        rack_name = row.get("batch_lot__product__rack_location__name") or row.get("batch_lot__rack_no") or ""
+        results.append(
+            {
+                "batch_id": row["batch_lot_id"],
+                "medicine_id": row.get("batch_lot__product__code"),
+                "product_id": row.get("batch_lot__product__id"),
+                "batch_number": row.get("batch_lot__batch_no"),
+                "medicine_name": row.get("batch_lot__product__name"),
+                "category": row.get("batch_lot__product__category__name") or "",
+                "category_id": row.get("batch_lot__product__category_id"),
+                "quantity": float(qty),
+                "uom": row.get("batch_lot__product__base_uom__name"),
+                "rack": rack_name,
+                "mrp": float(row.get("batch_lot__product__mrp") or 0),
+                "expiry_date": row.get("batch_lot__expiry_date"),
+                "status": status_txt,
+            }
+        )
+    return results
 
 
 def inventory_stats(location_id: int) -> dict:
