@@ -164,6 +164,8 @@ class PurchaseOrder(models.Model):
 
 class PurchaseOrderLine(models.Model):
     po = models.ForeignKey(PurchaseOrder, on_delete=models.CASCADE, related_name='lines')
+    product = models.ForeignKey('catalog.Product', on_delete=models.PROTECT, null=True, blank=True)
+    medicine_form = models.ForeignKey('catalog.MedicineForm', on_delete=models.SET_NULL, null=True, blank=True)
     requested_name = models.CharField(max_length=200, blank=True)
     qty_packs_ordered = models.IntegerField()
     expected_unit_cost = models.DecimalField(max_digits=14, decimal_places=2)

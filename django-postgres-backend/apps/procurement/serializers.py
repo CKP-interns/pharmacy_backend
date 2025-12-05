@@ -61,6 +61,8 @@ class PurchaseOrderLineSerializer(serializers.ModelSerializer):
         extra_kwargs = {
             "po": {"required": False},
             "expected_unit_cost": {"required": False},
+            "product": {"required": False, "allow_null": True},
+            "medicine_form": {"required": False, "allow_null": True},
         }
 
     def validate(self, attrs):
