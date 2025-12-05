@@ -278,6 +278,18 @@ def global_inventory_rows(
     status: str | None = None,
     location_id: int | None = None,
 ) -> list[dict]:
+    low_default, _ = get_stock_thresholds()
+    try:
+        default_threshold = Decimal(str(low_default or 0))
+    except Exception:
+        default_threshold = Decimal("0")
+
+    try:
+        warn_days = int(get_setting("ALERT_EXPIRY_WARNING_DAYS", "60") or 60)
+    except Exception:
+        warn_days = 60
+    expiry_cutoff = _date.today() + timedelta(days=warn_days)
+
     qs = (
         InventoryMovement.objects.select_related(
             "batch_lot",
@@ -331,8 +343,30 @@ def global_inventory_rows(
     results: list[dict] = []
     for row in grouped:
         qty = Decimal(row.get("total_qty") or 0)
-        status_txt = stock_status_for_quantity(qty, row.get("batch__product__reorder_level"))
-        if status_filter and status_txt != status_filter:
+        reorder_val = row.get("batch_lot__product__reorder_level")
+        try:
+            reorder_level = Decimal(str(reorder_val)) if reorder_val is not None else None
+        except Exception:
+            reorder_level = None
+        threshold = (
+            reorder_level
+            if reorder_level and reorder_level > 0
+            else (default_threshold if default_threshold > 0 else None)
+        )
+        status_txt = stock_status_for_quantity(qty, threshold)
+
+        expiry_date = row.get("batch_lot__expiry_date")
+        is_expiring = bool(
+            expiry_date
+            and isinstance(expiry_date, _date)
+            and expiry_date >= _date.today()
+            and expiry_date <= expiry_cutoff
+        )
+
+        if status_filter == "EXPIRING":
+            if not is_expiring:
+                continue
+        elif status_filter and status_txt != status_filter:
             continue
         rack_name = row.get("batch_lot__product__rack_location__name") or row.get("batch_lot__rack_no") or ""
         results.append(
@@ -350,6 +384,7 @@ def global_inventory_rows(
                 "mrp": float(row.get("batch_lot__product__mrp") or 0),
                 "expiry_date": row.get("batch_lot__expiry_date"),
                 "status": status_txt,
+                "is_expiring": is_expiring,
             }
         )
     return results

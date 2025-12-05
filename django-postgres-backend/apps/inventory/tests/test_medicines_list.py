@@ -152,3 +152,12 @@ class GlobalMedicinesViewTests(APITestCase):
         resp = self.client.get(url, {"status": "IN_STOCK"})
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(len(resp.data), 0)
+
+    def test_global_endpoint_filters_expiring(self):
+        self.batch.expiry_date = date.today() + timedelta(days=5)
+        self.batch.save(update_fields=["expiry_date"])
+        url = "/api/v1/inventory/medicines/global/"
+        resp = self.client.get(url, {"status": "EXPIRING"})
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(resp.data), 1)
+        self.assertTrue(resp.data[0]["is_expiring"])
