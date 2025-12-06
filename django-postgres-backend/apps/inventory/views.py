@@ -624,6 +624,22 @@ class MedicineDetailView(MedicineViewMixin, APIView):
         }
         return Response(response_payload)
 
+    @transaction.atomic
+    def delete(self, request, batch_id: int):
+        if not request.user.is_staff:
+            raise permissions.PermissionDenied("Only administrators can delete medicines.")
+        try:
+            batch = self.get_batch(batch_id)
+        except BatchLot.DoesNotExist:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        product = batch.product
+        batch.delete()
+        # If the product has no more batches attached, mark it inactive to hide from listings.
+        if not product.batches.exists():
+            product.is_active = False
+            product.save(update_fields=["is_active"])
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
 class MedicinesListView(APIView):
     """
     Aggregate view used by the UI to show current medicines/stock per batch at a location.
