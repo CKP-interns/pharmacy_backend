@@ -37,7 +37,13 @@ def is_batch_sellable(batch_lot_id: int, on_date: _date | None = None) -> tuple[
 
 
 STRIP_NAMES = {"STRIP", "STRIPS"}
-BOX_NAMES = {"BOX", "BOXES", "CARTON", "CARTONS"}
+BOX_NAMES = {"BOX", "BOXES", "CARTON", "CARTONS", "PACK", "PACKS"}
+BOTTLE_NAMES = {"BOTTLE", "BOTTLES", "BOT", "BTS"}
+TUBE_NAMES = {"TUBE", "TUBES"}
+TAB_BASE_NAMES = {"TAB", "TABLET", "TABLETS", "CAP", "CAPS", "CAPSULE", "CAPSULES"}
+ML_BASE_NAMES = {"ML", "MILLILITER", "MILLILITRE"}
+VIAL_BASE_NAMES = {"VIAL", "VIALS", "AMP", "AMPOULE", "AMPOULES"}
+GM_BASE_NAMES = {"GM", "GRAM", "GRAMS", "GMS", "GRM"}
 
 
 def convert_quantity_to_base(
@@ -49,6 +55,11 @@ def convert_quantity_to_base(
     units_per_pack: Decimal,
     tablets_per_strip: int | None = None,
     strips_per_box: int | None = None,
+    ml_per_bottle: Decimal | None = None,
+    bottles_per_box: int | None = None,
+    grams_per_tube: Decimal | None = None,
+    tubes_per_box: int | None = None,
+    vials_per_box: int | None = None,
 ) -> tuple[Decimal, Decimal]:
     """
     Convert quantity expressed in quantity_uom into base units.
@@ -70,16 +81,40 @@ def convert_quantity_to_base(
         factor = units_per_pack
     elif quantity_uom.id == base_uom.id:
         factor = Decimal("1")
-    elif base_name in {"TAB", "TABLET", "CAP", "CAPSULE"} and q_uom_name in STRIP_NAMES:
+    elif base_name in TAB_BASE_NAMES and q_uom_name in STRIP_NAMES:
         if not tablets_per_strip:
             raise ValidationError({"tablets_per_strip": "tablets_per_strip is required for STRIP quantities"})
         factor = Decimal(tablets_per_strip)
-    elif base_name in {"TAB", "TABLET", "CAP", "CAPSULE"} and q_uom_name in BOX_NAMES:
+    elif base_name in TAB_BASE_NAMES and q_uom_name in BOX_NAMES:
         if not tablets_per_strip:
             raise ValidationError({"tablets_per_strip": "tablets_per_strip is required for BOX quantities"})
         if not strips_per_box:
             raise ValidationError({"strips_per_box": "strips_per_box is required for BOX quantities"})
         factor = Decimal(tablets_per_strip) * Decimal(strips_per_box)
+    elif base_name in ML_BASE_NAMES and q_uom_name in BOTTLE_NAMES:
+        if not ml_per_bottle:
+            raise ValidationError({"ml_per_bottle": "ml_per_bottle is required for bottle quantities"})
+        factor = Decimal(ml_per_bottle)
+    elif base_name in ML_BASE_NAMES and q_uom_name in BOX_NAMES:
+        if not ml_per_bottle:
+            raise ValidationError({"ml_per_bottle": "ml_per_bottle is required for box quantities"})
+        if not bottles_per_box:
+            raise ValidationError({"bottles_per_box": "bottles_per_box is required for box quantities"})
+        factor = Decimal(ml_per_bottle) * Decimal(bottles_per_box)
+    elif base_name in GM_BASE_NAMES and q_uom_name in TUBE_NAMES:
+        if not grams_per_tube:
+            raise ValidationError({"grams_per_tube": "grams_per_tube is required for tube quantities"})
+        factor = Decimal(grams_per_tube)
+    elif base_name in GM_BASE_NAMES and q_uom_name in BOX_NAMES:
+        if not grams_per_tube:
+            raise ValidationError({"grams_per_tube": "grams_per_tube is required for box quantities"})
+        if not tubes_per_box:
+            raise ValidationError({"tubes_per_box": "tubes_per_box is required for box quantities"})
+        factor = Decimal(grams_per_tube) * Decimal(tubes_per_box)
+    elif base_name in VIAL_BASE_NAMES and q_uom_name in BOX_NAMES:
+        if not vials_per_box:
+            raise ValidationError({"vials_per_box": "vials_per_box is required for box quantities"})
+        factor = Decimal(vials_per_box)
     else:
         raise ValidationError({
             "quantity_uom": f"Cannot convert from {quantity_uom} to base unit {base_uom}. Provide units_per_pack."

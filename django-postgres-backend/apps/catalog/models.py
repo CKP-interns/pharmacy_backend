@@ -49,6 +49,12 @@ class Product(models.Model):
     is_active = models.BooleanField(default=True)
     tablets_per_strip = models.PositiveIntegerField(null=True, blank=True)
     strips_per_box = models.PositiveIntegerField(null=True, blank=True)
+    ml_per_bottle = models.DecimalField(max_digits=14, decimal_places=3, null=True, blank=True)
+    bottles_per_box = models.PositiveIntegerField(null=True, blank=True)
+    vials_per_box = models.PositiveIntegerField(null=True, blank=True)
+    ml_per_vial = models.DecimalField(max_digits=14, decimal_places=3, null=True, blank=True)
+    grams_per_tube = models.DecimalField(max_digits=14, decimal_places=3, null=True, blank=True)
+    tubes_per_box = models.PositiveIntegerField(null=True, blank=True)
 
     class Meta:
         indexes = [
@@ -73,6 +79,18 @@ class Product(models.Model):
             raise ValueError("tablets_per_strip must be > 0")
         if self.strips_per_box is not None and self.strips_per_box <= 0:
             raise ValueError("strips_per_box must be > 0")
+        if self.ml_per_bottle is not None and self.ml_per_bottle <= 0:
+            raise ValueError("ml_per_bottle must be > 0")
+        if self.bottles_per_box is not None and self.bottles_per_box <= 0:
+            raise ValueError("bottles_per_box must be > 0")
+        if self.vials_per_box is not None and self.vials_per_box <= 0:
+            raise ValueError("vials_per_box must be > 0")
+        if self.ml_per_vial is not None and self.ml_per_vial <= 0:
+            raise ValueError("ml_per_vial must be > 0")
+        if self.grams_per_tube is not None and self.grams_per_tube <= 0:
+            raise ValueError("grams_per_tube must be > 0")
+        if self.tubes_per_box is not None and self.tubes_per_box <= 0:
+            raise ValueError("tubes_per_box must be > 0")
 
         # Keep legacy unit char fields in sync with master tables when possible
         if self.base_uom_id and getattr(self.base_uom, "name", None):

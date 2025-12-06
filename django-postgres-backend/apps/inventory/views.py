@@ -18,6 +18,7 @@ from .services import (
     global_inventory_rows,
 )
 from .models import RackLocation, InventoryMovement
+from apps.locations.models import Location
 from .serializers import (
     RackLocationSerializer,
     AddMedicineRequestSerializer,
@@ -355,6 +356,12 @@ class MedicineViewMixin:
         product.description = payload.get("description") or ""
         product.tablets_per_strip = payload.get("tablets_per_strip")
         product.strips_per_box = payload.get("strips_per_box")
+        product.ml_per_bottle = payload.get("ml_per_bottle")
+        product.bottles_per_box = payload.get("bottles_per_box")
+        product.vials_per_box = payload.get("vials_per_box")
+        product.ml_per_vial = payload.get("ml_per_vial")
+        product.grams_per_tube = payload.get("grams_per_tube")
+        product.tubes_per_box = payload.get("tubes_per_box")
         product.rack_location = payload.get("rack_location")
         product.is_active = True
         product.save()
@@ -438,6 +445,12 @@ class MedicineViewMixin:
             "storage_instructions": product.storage_instructions or "",
             "tablets_per_strip": product.tablets_per_strip,
             "strips_per_box": product.strips_per_box,
+            "ml_per_bottle": str(product.ml_per_bottle) if product.ml_per_bottle is not None else None,
+            "bottles_per_box": product.bottles_per_box,
+            "vials_per_box": product.vials_per_box,
+            "ml_per_vial": str(product.ml_per_vial) if product.ml_per_vial is not None else None,
+            "grams_per_tube": str(product.grams_per_tube) if product.grams_per_tube is not None else None,
+            "tubes_per_box": product.tubes_per_box,
             "units_per_pack": str(product.units_per_pack or Decimal("0")),
             "mrp": str(product.mrp or Decimal("0.00")),
             "status": "ACTIVE" if product.is_active else "INACTIVE",
