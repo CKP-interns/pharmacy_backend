@@ -65,3 +65,12 @@ class AuthFlowTests(APITestCase):
 
         refresh_resp = self.client.post("/api/v1/auth/token/refresh/", {"refresh": refresh}, format="json")
         self.assertEqual(refresh_resp.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_forgot_password_rejects_unknown_email(self):
+        resp = self.client.post(
+            "/api/v1/accounts/forgot-password/",
+            {"email": "missing@example.com"},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(resp.data.get("detail"), "No account exists for this email.")

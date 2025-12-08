@@ -144,8 +144,13 @@ class ForgotPasswordView(APIView):
 
         email = serializer.validated_data["email"].strip().lower()
 
-        # found user (or did not reveal)
+        # found user (abort if account missing)
         user = User.objects.filter(email__iexact=email).first()
+        if not user:
+            return Response(
+                {"detail": "No account exists for this email."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
         # generated OTP and hashed OTP for DB
         otp = _generate_numeric_otp(self.OTP_LENGTH)
@@ -160,11 +165,7 @@ class ForgotPasswordView(APIView):
             "is_used": False,
         }
 
-        try:
-            if user:
-                otp_kwargs["user"] = user
-        except Exception:
-            pass
+        otp_kwargs["user"] = user
 
         PasswordResetOTP.objects.create(**otp_kwargs)
 
@@ -178,11 +179,11 @@ class ForgotPasswordView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-        # generic response to avoid leaking account existence
-        resp = {"detail": "If an account existed for this email, an OTP was sent."}
-
-        if user:
-            resp["uid"] = urlsafe_base64_encode(force_bytes(user.pk))
+        # deterministic response when OTP was sent
+        resp = {
+            "detail": "OTP sent to the registered email address.",
+            "uid": urlsafe_base64_encode(force_bytes(user.pk)),
+        }
 
         return Response(resp, status=status.HTTP_200_OK)
 

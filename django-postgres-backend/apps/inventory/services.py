@@ -326,7 +326,10 @@ def global_inventory_rows(
             "batch_lot__product__rack_location",
             "batch_lot__product__base_uom",
         )
-        .filter(batch_lot__product__is_active=True)
+        .filter(
+            batch_lot__product__is_active=True,
+            batch_lot__status=BatchLot.Status.ACTIVE,
+        )
     )
     if location_id:
         qs = qs.filter(location_id=location_id)

@@ -27,9 +27,14 @@ from .serializers import (
 )
 from apps.settingsx.services import get_setting
 from django.db import transaction
+from django.db.models import ProtectedError
 from apps.inventory.models import BatchStock
 from apps.settingsx.utils import get_stock_thresholds
 from apps.settingsx.models import SettingKV
+from apps.sales.models import SalesLine
+from apps.transfers.models import TransferLine
+from apps.procurement.models import VendorReturn, PurchaseOrderLine, GoodsReceiptLine
+from apps.compliance.models import H1RegisterEntry, NDPSDailyEntry, RecallEvent
 
 
 class HealthView(APIView):
@@ -332,6 +337,19 @@ class MedicineViewMixin:
         next_id = (last.id + 1) if last else 1
         return f"PRD-{next_id:05d}"
 
+    def _purge_batch_dependencies(self, batch: BatchLot):
+        SalesLine.objects.filter(batch_lot=batch).delete()
+        VendorReturn.objects.filter(batch_lot=batch).delete()
+        RecallEvent.objects.filter(batch_lot=batch).delete()
+        H1RegisterEntry.objects.filter(batch_lot=batch).update(batch_lot=None)
+        TransferLine.objects.filter(batch_lot=batch).delete()
+
+    def _purge_product_dependencies(self, product: Product):
+        NDPSDailyEntry.objects.filter(product=product).delete()
+        H1RegisterEntry.objects.filter(product=product).update(product=None)
+        PurchaseOrderLine.objects.filter(product=product).update(product=None)
+        GoodsReceiptLine.objects.filter(product=product).update(product=None)
+
     def _upsert_product(self, payload: dict) -> Product:
         product_id = payload.get("id")
         product = None
@@ -633,11 +651,12 @@ class MedicineDetailView(MedicineViewMixin, APIView):
         except BatchLot.DoesNotExist:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         product = batch.product
+        self._purge_batch_dependencies(batch)
         batch.delete()
-        # If the product has no more batches attached, mark it inactive to hide from listings.
         if not product.batches.exists():
-            product.is_active = False
-            product.save(update_fields=["is_active"])
+            self._purge_product_dependencies(product)
+            product.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 class MedicinesListView(APIView):
