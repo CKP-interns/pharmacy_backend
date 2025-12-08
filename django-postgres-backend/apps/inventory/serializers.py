@@ -69,20 +69,41 @@ class MedicinePayloadSerializer(serializers.Serializer):
     id = serializers.IntegerField(required=False)
     name = serializers.CharField(max_length=200)
     generic_name = serializers.CharField(max_length=200, required=False, allow_blank=True)
-    category = serializers.PrimaryKeyRelatedField(queryset=ProductCategory.objects.all())
-    form = serializers.PrimaryKeyRelatedField(queryset=MedicineForm.objects.all(), source="medicine_form")
+    category = serializers.CharField(max_length=120)  # Accept string category name or ID
+    form = serializers.PrimaryKeyRelatedField(queryset=MedicineForm.objects.all(), source="medicine_form", required=False)
     strength = serializers.CharField(max_length=64, required=False, allow_blank=True)
-    base_uom = serializers.PrimaryKeyRelatedField(queryset=Uom.objects.all())
-    selling_uom = serializers.PrimaryKeyRelatedField(queryset=Uom.objects.all())
-    rack_location = serializers.PrimaryKeyRelatedField(queryset=RackLocation.objects.all())
+    base_uom = serializers.PrimaryKeyRelatedField(queryset=Uom.objects.all(), required=False)
+    selling_uom = serializers.PrimaryKeyRelatedField(queryset=Uom.objects.all(), required=False)
+    rack_location = serializers.PrimaryKeyRelatedField(queryset=RackLocation.objects.all(), required=False)
+    # Tablet/Capsule packaging
     tablets_per_strip = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+    capsules_per_strip = serializers.IntegerField(required=False, allow_null=True, min_value=1)
     strips_per_box = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+    # Liquid packaging
     ml_per_bottle = serializers.DecimalField(max_digits=14, decimal_places=3, required=False, allow_null=True)
     bottles_per_box = serializers.IntegerField(required=False, allow_null=True, min_value=1)
-    vials_per_box = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+    # Injection/Vial packaging
     ml_per_vial = serializers.DecimalField(max_digits=14, decimal_places=3, required=False, allow_null=True)
+    vials_per_box = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+    # Ointment/Cream/Gel packaging
     grams_per_tube = serializers.DecimalField(max_digits=14, decimal_places=3, required=False, allow_null=True)
     tubes_per_box = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+    # Inhaler packaging
+    doses_per_inhaler = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+    inhalers_per_box = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+    # Powder/Sachet packaging
+    grams_per_sachet = serializers.DecimalField(max_digits=14, decimal_places=3, required=False, allow_null=True)
+    sachets_per_box = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+    # Soap/Bar packaging
+    grams_per_bar = serializers.DecimalField(max_digits=14, decimal_places=3, required=False, allow_null=True)
+    bars_per_box = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+    # Pack/Generic packaging
+    pieces_per_pack = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+    packs_per_box = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+    # Gloves/Pairs packaging
+    pairs_per_pack = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+    # Cotton/Gauze packaging
+    grams_per_pack = serializers.DecimalField(max_digits=14, decimal_places=3, required=False, allow_null=True)
     gst_percent = serializers.DecimalField(max_digits=5, decimal_places=2, required=False)
     description = serializers.CharField(required=False, allow_blank=True)
     mrp = serializers.DecimalField(max_digits=14, decimal_places=2)
@@ -92,6 +113,56 @@ class MedicinePayloadSerializer(serializers.Serializer):
         if value and not Product.objects.filter(id=value).exists():
             raise serializers.ValidationError("Invalid medicine id.")
         return value
+
+    def validate_category(self, value):
+        """Convert frontend category string ID to ProductCategory instance"""
+        # Mapping from frontend category string IDs to database category names
+        CATEGORY_MAPPING = {
+            'tablet': 'Tablet',
+            'capsule': 'Capsule',
+            'syrup': 'Syrup/Suspension',
+            'injection': 'Injection/Vial',
+            'ointment': 'Ointment/Cream',
+            'drops': 'Drops (Eye/Ear/Nasal)',
+            'inhaler': 'Inhaler',
+            'powder': 'Powder/Sachet',
+            'gel': 'Gel',
+            'spray': 'Spray',
+            'lotion': 'Lotion/Solution',
+            'shampoo': 'Shampoo',
+            'soap': 'Soap/Bar',
+            'bandage': 'Bandage/Dressing',
+            'mask': 'Mask (Surgical/N95)',
+            'gloves': 'Gloves',
+            'cotton': 'Cotton/Gauze',
+            'sanitizer': 'Hand Sanitizer',
+            'thermometer': 'Thermometer',
+            'supplement': 'Supplement/Vitamin',
+            'other': 'Other/Miscellaneous',
+        }
+        
+        try:
+            # Try to treat as integer ID first
+            category_id = int(value)
+            category = ProductCategory.objects.filter(id=category_id).first()
+            if category:
+                return category
+            raise serializers.ValidationError(f"Invalid category ID: {category_id}")
+        except (ValueError, TypeError):
+            # Map frontend string ID to database category name
+            category_name = None
+            if value in CATEGORY_MAPPING:
+                category_name = CATEGORY_MAPPING[value]
+            else:
+                # If not in mapping, try the value as category name directly
+                category_name = value
+            
+            # Find or create the category
+            category, created = ProductCategory.objects.get_or_create(
+                name=category_name,
+                defaults={'is_active': True}
+            )
+            return category
 
     def validate(self, attrs):
         attrs["name"] = (attrs.get("name") or "").strip()
@@ -106,40 +177,71 @@ class MedicinePayloadSerializer(serializers.Serializer):
 
         units_per_pack = attrs.get("units_per_pack")
         tablets_per_strip = attrs.get("tablets_per_strip")
+        capsules_per_strip = attrs.get("capsules_per_strip")
         strips_per_box = attrs.get("strips_per_box")
-        selling_uom = attrs.get("selling_uom")
-        base_uom = attrs.get("base_uom")
         ml_per_bottle = attrs.get("ml_per_bottle")
         bottles_per_box = attrs.get("bottles_per_box")
         vials_per_box = attrs.get("vials_per_box")
         ml_per_vial = attrs.get("ml_per_vial")
         grams_per_tube = attrs.get("grams_per_tube")
         tubes_per_box = attrs.get("tubes_per_box")
+        grams_per_sachet = attrs.get("grams_per_sachet")
+        sachets_per_box = attrs.get("sachets_per_box")
+        grams_per_bar = attrs.get("grams_per_bar")
+        bars_per_box = attrs.get("bars_per_box")
+        pieces_per_pack = attrs.get("pieces_per_pack")
+        packs_per_box = attrs.get("packs_per_box")
+        pairs_per_pack = attrs.get("pairs_per_pack")
+        grams_per_pack = attrs.get("grams_per_pack")
+        doses_per_inhaler = attrs.get("doses_per_inhaler")
+        inhalers_per_box = attrs.get("inhalers_per_box")
+        
+        # Convert decimal fields
         if units_per_pack is not None:
             units_per_pack = Decimal(str(units_per_pack))
-        decimal_fields = ("ml_per_bottle", "ml_per_vial", "grams_per_tube")
+        decimal_fields = ("ml_per_bottle", "ml_per_vial", "grams_per_tube", "grams_per_sachet", "grams_per_bar", "grams_per_pack")
         for field in decimal_fields:
             if attrs.get(field) in (None, ""):
                 attrs[field] = None
             else:
                 attrs[field] = Decimal(str(attrs[field]))
+        
+        # Re-read after conversion
         ml_per_bottle = attrs.get("ml_per_bottle")
         ml_per_vial = attrs.get("ml_per_vial")
         grams_per_tube = attrs.get("grams_per_tube")
-        inferred = self._infer_units_per_pack(
+        grams_per_sachet = attrs.get("grams_per_sachet")
+        grams_per_bar = attrs.get("grams_per_bar")
+        grams_per_pack = attrs.get("grams_per_pack")
+        
+        # Calculate units_per_pack from packaging fields (new frontend approach)
+        inferred = self._calculate_units_per_pack_from_packaging(
             provided=units_per_pack,
-            selling_uom=selling_uom,
-            base_uom=base_uom,
             tablets_per_strip=tablets_per_strip,
+            capsules_per_strip=capsules_per_strip,
             strips_per_box=strips_per_box,
             ml_per_bottle=ml_per_bottle,
             bottles_per_box=bottles_per_box,
+            ml_per_vial=ml_per_vial,
+            vials_per_box=vials_per_box,
             grams_per_tube=grams_per_tube,
             tubes_per_box=tubes_per_box,
-            vials_per_box=vials_per_box,
+            grams_per_sachet=grams_per_sachet,
+            sachets_per_box=sachets_per_box,
+            grams_per_bar=grams_per_bar,
+            bars_per_box=bars_per_box,
+            pieces_per_pack=pieces_per_pack,
+            packs_per_box=packs_per_box,
+            pairs_per_pack=pairs_per_pack,
+            grams_per_pack=grams_per_pack,
+            doses_per_inhaler=doses_per_inhaler,
+            inhalers_per_box=inhalers_per_box,
         )
+        
         if inferred is None:
-            raise serializers.ValidationError({"units_per_pack": "Unable to determine units_per_pack for the selected UOMs."})
+            # Default to 1 if we can't calculate (for backward compatibility)
+            inferred = Decimal("1.000")
+        
         attrs["units_per_pack"] = inferred
 
         gst_percent = attrs.get("gst_percent")
@@ -149,98 +251,121 @@ class MedicinePayloadSerializer(serializers.Serializer):
         return attrs
 
     @staticmethod
-    def _infer_units_per_pack(
+    def _calculate_units_per_pack_from_packaging(
         *,
         provided: Decimal | None,
-        selling_uom: Uom,
-        base_uom: Uom,
         tablets_per_strip: int | None,
+        capsules_per_strip: int | None,
         strips_per_box: int | None,
         ml_per_bottle: Decimal | None,
         bottles_per_box: int | None,
+        ml_per_vial: Decimal | None,
+        vials_per_box: int | None,
         grams_per_tube: Decimal | None,
         tubes_per_box: int | None,
-        vials_per_box: int | None,
+        grams_per_sachet: Decimal | None,
+        sachets_per_box: int | None,
+        grams_per_bar: Decimal | None,
+        bars_per_box: int | None,
+        pieces_per_pack: int | None,
+        packs_per_box: int | None,
+        pairs_per_pack: int | None,
+        grams_per_pack: Decimal | None,
+        doses_per_inhaler: int | None,
+        inhalers_per_box: int | None,
     ) -> Decimal | None:
-        if provided is not None:
-            if provided <= 0:
-                raise serializers.ValidationError({"units_per_pack": "Must be greater than zero."})
+        """Calculate units_per_pack directly from packaging fields (new frontend approach)"""
+        if provided is not None and provided > 0:
             return provided
-        if selling_uom and base_uom and selling_uom.id == base_uom.id:
-            return Decimal("1.000")
-        selling_name = (selling_uom.name or "").strip().upper() if selling_uom else ""
-        base_name = (base_uom.name or "").strip().upper() if base_uom else ""
-        if selling_name in STRIP_NAMES and base_name in TAB_BASE_NAMES:
-            if not tablets_per_strip:
-                raise serializers.ValidationError({"tablets_per_strip": "tablets_per_strip is required for STRIP quantities."})
+        
+        # Tablet/Capsule: tablets_per_strip * strips_per_box (if box) or tablets_per_strip (if strip)
+        if tablets_per_strip:
+            if strips_per_box:
+                return Decimal(tablets_per_strip) * Decimal(strips_per_box)
             return Decimal(tablets_per_strip)
-        if selling_name in BOX_NAMES and base_name in TAB_BASE_NAMES:
-            if not tablets_per_strip:
-                raise serializers.ValidationError({"tablets_per_strip": "tablets_per_strip is required for BOX quantities."})
-            if not strips_per_box:
-                raise serializers.ValidationError({"strips_per_box": "strips_per_box is required for BOX quantities."})
-            return Decimal(tablets_per_strip) * Decimal(strips_per_box)
-        if selling_name in BOTTLE_NAMES and base_name in ML_BASE_NAMES:
-            if not ml_per_bottle:
-                raise serializers.ValidationError({"ml_per_bottle": "ml_per_bottle is required for bottle quantities."})
+        
+        if capsules_per_strip:
+            if strips_per_box:
+                return Decimal(capsules_per_strip) * Decimal(strips_per_box)
+            return Decimal(capsules_per_strip)
+        
+        # Liquid: ml_per_bottle * bottles_per_box (if box) or ml_per_bottle (if bottle)
+        if ml_per_bottle:
+            if bottles_per_box:
+                return ml_per_bottle * Decimal(bottles_per_box)
             return ml_per_bottle
-        if selling_name in BOX_NAMES and base_name in ML_BASE_NAMES:
-            if not ml_per_bottle:
-                raise serializers.ValidationError({"ml_per_bottle": "ml_per_bottle is required for box quantities."})
-            if not bottles_per_box:
-                raise serializers.ValidationError({"bottles_per_box": "bottles_per_box is required for box quantities."})
-            return ml_per_bottle * Decimal(bottles_per_box)
-        if selling_name in TUBE_NAMES and base_name in GM_BASE_NAMES:
-            if not grams_per_tube:
-                raise serializers.ValidationError({"grams_per_tube": "grams_per_tube is required for tube quantities."})
+        
+        # Injection/Vial: ml_per_vial * vials_per_box (if box) or ml_per_vial (if vial)
+        if ml_per_vial:
+            if vials_per_box:
+                return ml_per_vial * Decimal(vials_per_box)
+            return ml_per_vial
+        
+        # Ointment/Cream/Gel: grams_per_tube * tubes_per_box (if box) or grams_per_tube (if tube)
+        if grams_per_tube:
+            if tubes_per_box:
+                return grams_per_tube * Decimal(tubes_per_box)
             return grams_per_tube
-        if selling_name in BOX_NAMES and base_name in GM_BASE_NAMES:
-            if not grams_per_tube:
-                raise serializers.ValidationError({"grams_per_tube": "grams_per_tube is required for box quantities."})
-            if not tubes_per_box:
-                raise serializers.ValidationError({"tubes_per_box": "tubes_per_box is required for box quantities."})
-            return grams_per_tube * Decimal(tubes_per_box)
-        if selling_name in BOX_NAMES and base_name in VIAL_BASE_NAMES:
-            if not vials_per_box:
-                raise serializers.ValidationError({"vials_per_box": "vials_per_box is required for box quantities."})
+        
+        # Powder/Sachet: grams_per_sachet * sachets_per_box (if box) or grams_per_sachet (if sachet)
+        if grams_per_sachet:
+            if sachets_per_box:
+                return grams_per_sachet * Decimal(sachets_per_box)
+            return grams_per_sachet
+        
+        # Soap/Bar: grams_per_bar * bars_per_box (if box) or grams_per_bar (if bar)
+        if grams_per_bar:
+            if bars_per_box:
+                return grams_per_bar * Decimal(bars_per_box)
+            return grams_per_bar
+        
+        # Pack/Generic: pieces_per_pack * packs_per_box (if box) or pieces_per_pack (if pack)
+        if pieces_per_pack:
+            if packs_per_box:
+                return Decimal(pieces_per_pack) * Decimal(packs_per_box)
+            return Decimal(pieces_per_pack)
+        
+        # Gloves: pairs_per_pack * packs_per_box (if box) or pairs_per_pack (if pack)
+        if pairs_per_pack:
+            if packs_per_box:
+                return Decimal(pairs_per_pack) * Decimal(packs_per_box)
+            return Decimal(pairs_per_pack)
+        
+        # Cotton/Gauze: grams_per_pack * packs_per_box (if box) or grams_per_pack (if pack)
+        if grams_per_pack:
+            if packs_per_box:
+                return grams_per_pack * Decimal(packs_per_box)
+            return grams_per_pack
+        
+        # Inhaler: doses_per_inhaler * inhalers_per_box (if box) or doses_per_inhaler (if inhaler)
+        if doses_per_inhaler:
+            if inhalers_per_box:
+                return Decimal(doses_per_inhaler) * Decimal(inhalers_per_box)
+            return Decimal(doses_per_inhaler)
+        
+        # Vials per box (for injection)
+        if vials_per_box:
             return Decimal(vials_per_box)
+        
+        # Default: return None (will be set to 1.000 in validate method)
         return None
 
     def _enforce_packaging_rules(self, attrs: dict) -> None:
-        base_uom = attrs.get("base_uom")
-        form = attrs.get("medicine_form")
-        if not base_uom or not form:
-            return
-        base_name = (base_uom.name or "").strip().upper()
-        form_name = (form.name or "").strip().upper()
-
-        def require_positive(value, field, message):
-            if value in (None, ""):
-                raise serializers.ValidationError({field: message})
-            if isinstance(value, (int, float, Decimal)):
-                if Decimal(str(value)) <= 0:
-                    raise serializers.ValidationError({field: message})
-
-        if base_name in TAB_BASE_NAMES and form_name in {"TABLET", "CAPSULE"}:
-            require_positive(attrs.get("tablets_per_strip"), "tablets_per_strip", "Tablets per strip is required for tablet/capsule forms.")
-            require_positive(attrs.get("strips_per_box"), "strips_per_box", "Strips per box is required for tablet/capsule forms.")
-        elif base_name in ML_BASE_NAMES and form_name in {"SYRUP", "SUSPENSION", "DROPS"}:
-            require_positive(attrs.get("ml_per_bottle"), "ml_per_bottle", "ML per bottle is required for liquid forms.")
-            require_positive(attrs.get("bottles_per_box"), "bottles_per_box", "Bottles per box is required for liquid forms.")
-        elif base_name in VIAL_BASE_NAMES and form_name in {"INJECTION", "VIAL", "AMPOULE"}:
-            require_positive(attrs.get("vials_per_box"), "vials_per_box", "Vials per box is required for injection/vial forms.")
-        elif base_name in GM_BASE_NAMES and form_name in {"OINTMENT", "CREAM", "GEL"}:
-            require_positive(attrs.get("grams_per_tube"), "grams_per_tube", "Grams per tube is required for ointment/cream/gel forms.")
-            require_positive(attrs.get("tubes_per_box"), "tubes_per_box", "Tubes per box is required for ointment/cream/gel forms.")
+        """Enforce packaging rules based on category - relaxed for new frontend approach"""
+        # With new frontend, packaging fields are optional and validated by category
+        # This method is kept for backward compatibility but doesn't enforce strict rules
+        # The frontend handles category-specific field requirements
+        pass
 
 
 class MedicineBatchInputSerializer(serializers.Serializer):
     batch_number = serializers.CharField(max_length=64)
     mfg_date = serializers.DateField(required=False, allow_null=True)
-    expiry_date = serializers.DateField()
+    expiry_date = serializers.DateField(required=False, allow_null=True)
     quantity = serializers.IntegerField(min_value=0)
-    quantity_uom = serializers.PrimaryKeyRelatedField(queryset=Uom.objects.all())
-    purchase_price = serializers.DecimalField(max_digits=14, decimal_places=2)
+    quantity_uom = serializers.PrimaryKeyRelatedField(queryset=Uom.objects.all(), required=False, allow_null=True)
+    stock_unit = serializers.ChoiceField(choices=['box', 'loose'], required=False, allow_blank=True)
+    purchase_price = serializers.DecimalField(max_digits=14, decimal_places=2, required=False, allow_null=True)
 
     def validate_batch_number(self, value):
         value = (value or "").strip()
@@ -256,7 +381,9 @@ class MedicineBatchInputSerializer(serializers.Serializer):
         if expiry and expiry < timezone.now().date():
             # Allow creation but inform API consumer
             raise serializers.ValidationError({"expiry_date": "Expiry date cannot be in the past."})
-        attrs["purchase_price"] = Decimal(str(attrs.get("purchase_price")))
+        purchase_price = attrs.get("purchase_price")
+        if purchase_price is not None:
+            attrs["purchase_price"] = Decimal(str(purchase_price))
         attrs["quantity"] = int(attrs.get("quantity"))
         return attrs
 
@@ -270,23 +397,126 @@ class AddMedicineRequestSerializer(serializers.Serializer):
     medicine = MedicinePayloadSerializer()
     batch = MedicineBatchInputSerializer()
 
+    def _infer_quantity_uom(self, stock_unit, category_id, medicine_data):
+        """Infer quantity_uom from stock_unit and category"""
+        from apps.catalog.models import Uom, ProductCategory
+        
+        if not stock_unit:
+            return None
+        
+        # Get category name
+        category_name = None
+        if category_id:
+            try:
+                if isinstance(category_id, ProductCategory):
+                    category_name = category_id.name
+                elif isinstance(category_id, int):
+                    category = ProductCategory.objects.filter(id=category_id).first()
+                    if category:
+                        category_name = category.name
+                elif hasattr(category_id, 'name'):
+                    category_name = category_id.name
+                else:
+                    category_name = str(category_id)
+            except:
+                pass
+        
+        # Map category to UOM names based on stock_unit
+        uom_name = None
+        
+        if stock_unit == "box":
+            # For box, always use BOX UOM
+            uom_name = "BOX"
+        elif stock_unit == "loose":
+            # For loose, determine based on category
+            if category_name:
+                category_lower = category_name.lower()
+                if "tablet" in category_lower or "capsule" in category_lower or "supplement" in category_lower:
+                    uom_name = "STRIP"
+                elif "syrup" in category_lower or "suspension" in category_lower or "drops" in category_lower or "spray" in category_lower or "lotion" in category_lower or "shampoo" in category_lower or "sanitizer" in category_lower:
+                    uom_name = "BOTTLE"
+                elif "injection" in category_lower or "vial" in category_lower:
+                    uom_name = "VIAL"
+                elif "ointment" in category_lower or "cream" in category_lower or "gel" in category_lower:
+                    uom_name = "TUBE"
+                elif "powder" in category_lower or "sachet" in category_lower:
+                    uom_name = "PACK"  # Sachets are typically sold as packs
+                elif "inhaler" in category_lower:
+                    uom_name = "INHALER"
+                elif "soap" in category_lower or "bar" in category_lower:
+                    uom_name = "PACK"  # Bars are typically sold as packs
+                elif "bandage" in category_lower or "dressing" in category_lower or "mask" in category_lower or "thermometer" in category_lower:
+                    uom_name = "PACK"
+                elif "gloves" in category_lower:
+                    uom_name = "PACK"
+                elif "cotton" in category_lower or "gauze" in category_lower:
+                    uom_name = "PACK"
+                else:
+                    uom_name = "PACK"  # Default for other categories
+            else:
+                uom_name = "PACK"  # Default if no category
+        
+        if uom_name:
+            try:
+                uom = Uom.objects.filter(name__iexact=uom_name).first()
+                if uom:
+                    return uom
+            except:
+                pass
+        
+        # Fallback: try to use selling_uom or base_uom
+        if medicine_data.get("selling_uom"):
+            return medicine_data.get("selling_uom")
+        if medicine_data.get("base_uom"):
+            return medicine_data.get("base_uom")
+        
+        return None
+
     def validate(self, attrs):
         medicine = attrs.get("medicine") or {}
         batch = attrs.get("batch") or {}
         quantity = Decimal(str(batch.get("quantity", 0)))
+        
+        # Infer quantity_uom from stock_unit if not provided
+        quantity_uom = batch.get("quantity_uom")
+        if not quantity_uom:
+            stock_unit = batch.get("stock_unit")
+            # Category is already validated and converted to ID by validate_category
+            category_id = medicine.get("category")
+            quantity_uom = self._infer_quantity_uom(stock_unit, category_id, medicine)
+            if quantity_uom:
+                batch["quantity_uom"] = quantity_uom
+            elif stock_unit:
+                # If we can't infer, try to use units_per_pack to determine
+                # This is a fallback - quantity_uom will be inferred in convert_quantity_to_base
+                pass
+        
         qty_base, factor = convert_quantity_to_base(
             quantity=quantity,
             base_uom=medicine.get("base_uom"),
             selling_uom=medicine.get("selling_uom"),
-            quantity_uom=batch.get("quantity_uom"),
+            quantity_uom=quantity_uom,
             units_per_pack=medicine.get("units_per_pack"),
+            stock_unit=batch.get("stock_unit"),  # Pass stock_unit for inference
             tablets_per_strip=medicine.get("tablets_per_strip"),
+            capsules_per_strip=medicine.get("capsules_per_strip"),
             strips_per_box=medicine.get("strips_per_box"),
             ml_per_bottle=medicine.get("ml_per_bottle"),
             bottles_per_box=medicine.get("bottles_per_box"),
+            ml_per_vial=medicine.get("ml_per_vial"),
             grams_per_tube=medicine.get("grams_per_tube"),
             tubes_per_box=medicine.get("tubes_per_box"),
             vials_per_box=medicine.get("vials_per_box"),
+            grams_per_sachet=medicine.get("grams_per_sachet"),
+            sachets_per_box=medicine.get("sachets_per_box"),
+            grams_per_bar=medicine.get("grams_per_bar"),
+            bars_per_box=medicine.get("bars_per_box"),
+            pieces_per_pack=medicine.get("pieces_per_pack"),
+            packs_per_box=medicine.get("packs_per_box"),
+            pairs_per_pack=medicine.get("pairs_per_pack"),
+            grams_per_pack=medicine.get("grams_per_pack"),
+            doses_per_inhaler=medicine.get("doses_per_inhaler"),
+            inhalers_per_box=medicine.get("inhalers_per_box"),
         )
         batch["quantity_base"] = qty_base
         batch["conversion_factor"] = qty_base
@@ -314,14 +544,36 @@ class MedicineResponseSerializer(serializers.Serializer):
     gst_percent = serializers.CharField()
     description = serializers.CharField()
     storage_instructions = serializers.CharField()
+    # Tablet/Capsule packaging
     tablets_per_strip = serializers.IntegerField(required=False, allow_null=True)
+    capsules_per_strip = serializers.IntegerField(required=False, allow_null=True)
     strips_per_box = serializers.IntegerField(required=False, allow_null=True)
+    # Liquid packaging
     ml_per_bottle = serializers.CharField(required=False, allow_null=True)
     bottles_per_box = serializers.IntegerField(required=False, allow_null=True)
-    vials_per_box = serializers.IntegerField(required=False, allow_null=True)
+    # Injection/Vial packaging
     ml_per_vial = serializers.CharField(required=False, allow_null=True)
+    vials_per_box = serializers.IntegerField(required=False, allow_null=True)
+    # Ointment/Cream/Gel packaging
     grams_per_tube = serializers.CharField(required=False, allow_null=True)
     tubes_per_box = serializers.IntegerField(required=False, allow_null=True)
+    # Inhaler packaging
+    doses_per_inhaler = serializers.IntegerField(required=False, allow_null=True)
+    inhalers_per_box = serializers.IntegerField(required=False, allow_null=True)
+    # Powder/Sachet packaging
+    grams_per_sachet = serializers.CharField(required=False, allow_null=True)
+    sachets_per_box = serializers.IntegerField(required=False, allow_null=True)
+    # Soap/Bar packaging
+    grams_per_bar = serializers.CharField(required=False, allow_null=True)
+    bars_per_box = serializers.IntegerField(required=False, allow_null=True)
+    # Pack/Generic packaging
+    pieces_per_pack = serializers.IntegerField(required=False, allow_null=True)
+    packs_per_box = serializers.IntegerField(required=False, allow_null=True)
+    # Gloves/Pairs packaging
+    pairs_per_pack = serializers.IntegerField(required=False, allow_null=True)
+    # Cotton/Gauze packaging
+    grams_per_pack = serializers.CharField(required=False, allow_null=True)
+    units_per_pack = serializers.CharField()
     mrp = serializers.CharField()
     status = serializers.CharField()
 

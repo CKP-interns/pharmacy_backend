@@ -47,14 +47,35 @@ class Product(models.Model):
     preferred_vendor = models.ForeignKey('procurement.Vendor', on_delete=models.SET_NULL, null=True, blank=True)
     is_sensitive = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
+    # Tablet/Capsule packaging
     tablets_per_strip = models.PositiveIntegerField(null=True, blank=True)
+    capsules_per_strip = models.PositiveIntegerField(null=True, blank=True)
     strips_per_box = models.PositiveIntegerField(null=True, blank=True)
+    # Liquid packaging
     ml_per_bottle = models.DecimalField(max_digits=14, decimal_places=3, null=True, blank=True)
     bottles_per_box = models.PositiveIntegerField(null=True, blank=True)
-    vials_per_box = models.PositiveIntegerField(null=True, blank=True)
+    # Injection/Vial packaging
     ml_per_vial = models.DecimalField(max_digits=14, decimal_places=3, null=True, blank=True)
+    vials_per_box = models.PositiveIntegerField(null=True, blank=True)
+    # Ointment/Cream/Gel packaging
     grams_per_tube = models.DecimalField(max_digits=14, decimal_places=3, null=True, blank=True)
     tubes_per_box = models.PositiveIntegerField(null=True, blank=True)
+    # Inhaler packaging
+    doses_per_inhaler = models.PositiveIntegerField(null=True, blank=True)
+    inhalers_per_box = models.PositiveIntegerField(null=True, blank=True)
+    # Powder/Sachet packaging
+    grams_per_sachet = models.DecimalField(max_digits=14, decimal_places=3, null=True, blank=True)
+    sachets_per_box = models.PositiveIntegerField(null=True, blank=True)
+    # Soap/Bar packaging
+    grams_per_bar = models.DecimalField(max_digits=14, decimal_places=3, null=True, blank=True)
+    bars_per_box = models.PositiveIntegerField(null=True, blank=True)
+    # Pack/Generic packaging
+    pieces_per_pack = models.PositiveIntegerField(null=True, blank=True)
+    packs_per_box = models.PositiveIntegerField(null=True, blank=True)
+    # Gloves/Pairs packaging
+    pairs_per_pack = models.PositiveIntegerField(null=True, blank=True)
+    # Cotton/Gauze packaging
+    grams_per_pack = models.DecimalField(max_digits=14, decimal_places=3, null=True, blank=True)
 
     class Meta:
         indexes = [
@@ -75,22 +96,64 @@ class Product(models.Model):
             raise ValueError("base_unit_step must be > 0")
         if self.reorder_level is not None and self.reorder_level < 0:
             raise ValueError("reorder_level must be >= 0")
+        
+        # Tablet/Capsule validations
         if self.tablets_per_strip is not None and self.tablets_per_strip <= 0:
             raise ValueError("tablets_per_strip must be > 0")
+        if self.capsules_per_strip is not None and self.capsules_per_strip <= 0:
+            raise ValueError("capsules_per_strip must be > 0")
         if self.strips_per_box is not None and self.strips_per_box <= 0:
             raise ValueError("strips_per_box must be > 0")
+        
+        # Liquid validations
         if self.ml_per_bottle is not None and self.ml_per_bottle <= 0:
             raise ValueError("ml_per_bottle must be > 0")
         if self.bottles_per_box is not None and self.bottles_per_box <= 0:
             raise ValueError("bottles_per_box must be > 0")
-        if self.vials_per_box is not None and self.vials_per_box <= 0:
-            raise ValueError("vials_per_box must be > 0")
+        
+        # Injection/Vial validations
         if self.ml_per_vial is not None and self.ml_per_vial <= 0:
             raise ValueError("ml_per_vial must be > 0")
+        if self.vials_per_box is not None and self.vials_per_box <= 0:
+            raise ValueError("vials_per_box must be > 0")
+        
+        # Ointment/Cream/Gel validations
         if self.grams_per_tube is not None and self.grams_per_tube <= 0:
             raise ValueError("grams_per_tube must be > 0")
         if self.tubes_per_box is not None and self.tubes_per_box <= 0:
             raise ValueError("tubes_per_box must be > 0")
+        
+        # Inhaler validations
+        if self.doses_per_inhaler is not None and self.doses_per_inhaler <= 0:
+            raise ValueError("doses_per_inhaler must be > 0")
+        if self.inhalers_per_box is not None and self.inhalers_per_box <= 0:
+            raise ValueError("inhalers_per_box must be > 0")
+        
+        # Powder/Sachet validations
+        if self.grams_per_sachet is not None and self.grams_per_sachet <= 0:
+            raise ValueError("grams_per_sachet must be > 0")
+        if self.sachets_per_box is not None and self.sachets_per_box <= 0:
+            raise ValueError("sachets_per_box must be > 0")
+        
+        # Soap/Bar validations
+        if self.grams_per_bar is not None and self.grams_per_bar <= 0:
+            raise ValueError("grams_per_bar must be > 0")
+        if self.bars_per_box is not None and self.bars_per_box <= 0:
+            raise ValueError("bars_per_box must be > 0")
+        
+        # Pack/Generic validations
+        if self.pieces_per_pack is not None and self.pieces_per_pack <= 0:
+            raise ValueError("pieces_per_pack must be > 0")
+        if self.packs_per_box is not None and self.packs_per_box <= 0:
+            raise ValueError("packs_per_box must be > 0")
+        
+        # Gloves/Pairs validations
+        if self.pairs_per_pack is not None and self.pairs_per_pack <= 0:
+            raise ValueError("pairs_per_pack must be > 0")
+        
+        # Cotton/Gauze validations
+        if self.grams_per_pack is not None and self.grams_per_pack <= 0:
+            raise ValueError("grams_per_pack must be > 0")
 
         # Keep legacy unit char fields in sync with master tables when possible
         if self.base_uom_id and getattr(self.base_uom, "name", None):

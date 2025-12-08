@@ -370,21 +370,84 @@ class MedicineViewMixin:
         product.dosage_strength = payload.get("strength") or ""
         product.category = payload.get("category")
         product.medicine_form = payload.get("medicine_form")
+        # UOMs are optional - will be inferred if not provided
         product.base_uom = payload.get("base_uom")
         product.selling_uom = payload.get("selling_uom")
-        product.units_per_pack = payload.get("units_per_pack")
+        product.units_per_pack = payload.get("units_per_pack") or Decimal("1.000")
         product.base_unit_step = Decimal("1.000")
         product.mrp = payload.get("mrp")
         product.gst_percent = payload.get("gst_percent")
         product.description = payload.get("description") or ""
+        # Set legacy char fields for backward compatibility
+        if product.base_uom:
+            product.base_unit = product.base_uom.name or "UNIT"
+        else:
+            product.base_unit = payload.get("base_unit") or "UNIT"
+        if product.selling_uom:
+            product.pack_unit = product.selling_uom.name or "PACK"
+        else:
+            product.pack_unit = payload.get("pack_unit") or "PACK"
+        
+        # Set default UOMs if not provided (for backward compatibility)
+        # The Product model's save() method will handle setting base_unit and pack_unit from UOMs
+        if not product.base_uom:
+            try:
+                from apps.catalog.models import Uom
+                # Try common base UOMs
+                for uom_name in ["TAB", "ML", "GM", "UNIT"]:
+                    default_uom = Uom.objects.filter(name__iexact=uom_name).first()
+                    if default_uom:
+                        product.base_uom = default_uom
+                        break
+            except:
+                pass
+        
+        if not product.selling_uom:
+            try:
+                from apps.catalog.models import Uom
+                # Try common selling UOMs
+                for uom_name in ["STRIP", "BOTTLE", "TUBE", "PACK"]:
+                    default_uom = Uom.objects.filter(name__iexact=uom_name).first()
+                    if default_uom:
+                        product.selling_uom = default_uom
+                        break
+                # If still not set, use base_uom
+                if not product.selling_uom and product.base_uom:
+                    product.selling_uom = product.base_uom
+            except:
+                if product.base_uom:
+                    product.selling_uom = product.base_uom
+        # Tablet/Capsule packaging
         product.tablets_per_strip = payload.get("tablets_per_strip")
+        product.capsules_per_strip = payload.get("capsules_per_strip")
         product.strips_per_box = payload.get("strips_per_box")
+        # Liquid packaging
         product.ml_per_bottle = payload.get("ml_per_bottle")
         product.bottles_per_box = payload.get("bottles_per_box")
-        product.vials_per_box = payload.get("vials_per_box")
+        # Injection/Vial packaging
         product.ml_per_vial = payload.get("ml_per_vial")
+        product.vials_per_box = payload.get("vials_per_box")
+        # Ointment/Cream/Gel packaging
         product.grams_per_tube = payload.get("grams_per_tube")
         product.tubes_per_box = payload.get("tubes_per_box")
+        # Inhaler packaging
+        product.doses_per_inhaler = payload.get("doses_per_inhaler")
+        product.inhalers_per_box = payload.get("inhalers_per_box")
+        # Powder/Sachet packaging
+        product.grams_per_sachet = payload.get("grams_per_sachet")
+        product.sachets_per_box = payload.get("sachets_per_box")
+        # Soap/Bar packaging
+        product.grams_per_bar = payload.get("grams_per_bar")
+        product.bars_per_box = payload.get("bars_per_box")
+        # Pack/Generic packaging
+        product.pieces_per_pack = payload.get("pieces_per_pack")
+        product.packs_per_box = payload.get("packs_per_box")
+        # Gloves/Pairs packaging
+        product.pairs_per_pack = payload.get("pairs_per_pack")
+        # Cotton/Gauze packaging
+        product.grams_per_pack = payload.get("grams_per_pack")
+        # Units per pack (generic)
+        product.units_per_pack = payload.get("units_per_pack")
         product.rack_location = payload.get("rack_location")
         product.is_active = True
         product.save()
@@ -466,14 +529,35 @@ class MedicineViewMixin:
             "gst_percent": str(product.gst_percent or Decimal("0")),
             "description": product.description or "",
             "storage_instructions": product.storage_instructions or "",
+            # Tablet/Capsule packaging
             "tablets_per_strip": product.tablets_per_strip,
+            "capsules_per_strip": product.capsules_per_strip,
             "strips_per_box": product.strips_per_box,
+            # Liquid packaging
             "ml_per_bottle": str(product.ml_per_bottle) if product.ml_per_bottle is not None else None,
             "bottles_per_box": product.bottles_per_box,
-            "vials_per_box": product.vials_per_box,
+            # Injection/Vial packaging
             "ml_per_vial": str(product.ml_per_vial) if product.ml_per_vial is not None else None,
+            "vials_per_box": product.vials_per_box,
+            # Ointment/Cream/Gel packaging
             "grams_per_tube": str(product.grams_per_tube) if product.grams_per_tube is not None else None,
             "tubes_per_box": product.tubes_per_box,
+            # Inhaler packaging
+            "doses_per_inhaler": product.doses_per_inhaler,
+            "inhalers_per_box": product.inhalers_per_box,
+            # Powder/Sachet packaging
+            "grams_per_sachet": str(product.grams_per_sachet) if product.grams_per_sachet is not None else None,
+            "sachets_per_box": product.sachets_per_box,
+            # Soap/Bar packaging
+            "grams_per_bar": str(product.grams_per_bar) if product.grams_per_bar is not None else None,
+            "bars_per_box": product.bars_per_box,
+            # Pack/Generic packaging
+            "pieces_per_pack": product.pieces_per_pack,
+            "packs_per_box": product.packs_per_box,
+            # Gloves/Pairs packaging
+            "pairs_per_pack": product.pairs_per_pack,
+            # Cotton/Gauze packaging
+            "grams_per_pack": str(product.grams_per_pack) if product.grams_per_pack is not None else None,
             "units_per_pack": str(product.units_per_pack or Decimal("0")),
             "mrp": str(product.mrp or Decimal("0.00")),
             "status": "ACTIVE" if product.is_active else "INACTIVE",

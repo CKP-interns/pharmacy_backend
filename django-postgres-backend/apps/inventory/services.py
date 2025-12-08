@@ -53,13 +53,26 @@ def convert_quantity_to_base(
     selling_uom,
     quantity_uom,
     units_per_pack: Decimal,
+    stock_unit: str | None = None,  # New: "box" or "loose"
     tablets_per_strip: int | None = None,
+    capsules_per_strip: int | None = None,
     strips_per_box: int | None = None,
     ml_per_bottle: Decimal | None = None,
     bottles_per_box: int | None = None,
+    ml_per_vial: Decimal | None = None,
     grams_per_tube: Decimal | None = None,
     tubes_per_box: int | None = None,
     vials_per_box: int | None = None,
+    grams_per_sachet: Decimal | None = None,
+    sachets_per_box: int | None = None,
+    grams_per_bar: Decimal | None = None,
+    bars_per_box: int | None = None,
+    pieces_per_pack: int | None = None,
+    packs_per_box: int | None = None,
+    pairs_per_pack: int | None = None,
+    grams_per_pack: Decimal | None = None,
+    doses_per_inhaler: int | None = None,
+    inhalers_per_box: int | None = None,
 ) -> tuple[Decimal, Decimal]:
     """
     Convert quantity expressed in quantity_uom into base units.
@@ -67,12 +80,125 @@ def convert_quantity_to_base(
     """
     if quantity < 0:
         raise ValidationError({"quantity": "Quantity must be >= 0"})
+    
+    # If quantity_uom is not provided, infer from stock_unit and packaging fields
     if not quantity_uom:
-        raise ValidationError({"quantity_uom": "Quantity unit is required"})
+        if stock_unit == "box":
+            # For box, calculate from packaging fields
+            # Tablet/Capsule
+            if (tablets_per_strip or capsules_per_strip) and strips_per_box:
+                per_strip = tablets_per_strip or capsules_per_strip
+                factor = Decimal(per_strip) * Decimal(strips_per_box)
+                return Decimal(quantity) * factor, factor
+            # Liquid (syrup, drops, spray, etc.)
+            elif ml_per_bottle and bottles_per_box:
+                factor = ml_per_bottle * Decimal(bottles_per_box)
+                return Decimal(quantity) * factor, factor
+            # Injection/Vial
+            elif ml_per_vial and vials_per_box:
+                factor = ml_per_vial * Decimal(vials_per_box)
+                return Decimal(quantity) * factor, factor
+            elif vials_per_box:
+                factor = Decimal(vials_per_box)
+                return Decimal(quantity) * factor, factor
+            # Ointment/Cream/Gel
+            elif grams_per_tube and tubes_per_box:
+                factor = grams_per_tube * Decimal(tubes_per_box)
+                return Decimal(quantity) * factor, factor
+            # Powder/Sachet
+            elif grams_per_sachet and sachets_per_box:
+                factor = grams_per_sachet * Decimal(sachets_per_box)
+                return Decimal(quantity) * factor, factor
+            # Soap/Bar
+            elif grams_per_bar and bars_per_box:
+                factor = grams_per_bar * Decimal(bars_per_box)
+                return Decimal(quantity) * factor, factor
+            # Pack/Generic
+            elif pieces_per_pack and packs_per_box:
+                factor = Decimal(pieces_per_pack) * Decimal(packs_per_box)
+                return Decimal(quantity) * factor, factor
+            # Gloves
+            elif pairs_per_pack and packs_per_box:
+                factor = Decimal(pairs_per_pack) * Decimal(packs_per_box)
+                return Decimal(quantity) * factor, factor
+            # Cotton/Gauze
+            elif grams_per_pack and packs_per_box:
+                factor = grams_per_pack * Decimal(packs_per_box)
+                return Decimal(quantity) * factor, factor
+            # Inhaler
+            elif doses_per_inhaler and inhalers_per_box:
+                factor = Decimal(doses_per_inhaler) * Decimal(inhalers_per_box)
+                return Decimal(quantity) * factor, factor
+            # Fallback: use units_per_pack if available
+            if units_per_pack and units_per_pack > 0:
+                return Decimal(quantity) * units_per_pack, units_per_pack
+        
+        elif stock_unit == "loose":
+            # For loose, calculate from per-unit packaging fields
+            # Tablet/Capsule
+            if tablets_per_strip:
+                factor = Decimal(tablets_per_strip)
+                return Decimal(quantity) * factor, factor
+            elif capsules_per_strip:
+                factor = Decimal(capsules_per_strip)
+                return Decimal(quantity) * factor, factor
+            # Liquid
+            elif ml_per_bottle:
+                factor = ml_per_bottle
+                return Decimal(quantity) * factor, factor
+            # Injection/Vial
+            elif ml_per_vial:
+                factor = ml_per_vial
+                return Decimal(quantity) * factor, factor
+            # Ointment/Cream/Gel
+            elif grams_per_tube:
+                factor = grams_per_tube
+                return Decimal(quantity) * factor, factor
+            # Powder/Sachet
+            elif grams_per_sachet:
+                factor = grams_per_sachet
+                return Decimal(quantity) * factor, factor
+            # Soap/Bar
+            elif grams_per_bar:
+                factor = grams_per_bar
+                return Decimal(quantity) * factor, factor
+            # Pack/Generic
+            elif pieces_per_pack:
+                factor = Decimal(pieces_per_pack)
+                return Decimal(quantity) * factor, factor
+            # Gloves
+            elif pairs_per_pack:
+                factor = Decimal(pairs_per_pack)
+                return Decimal(quantity) * factor, factor
+            # Cotton/Gauze
+            elif grams_per_pack:
+                factor = grams_per_pack
+                return Decimal(quantity) * factor, factor
+            # Inhaler
+            elif doses_per_inhaler:
+                factor = Decimal(doses_per_inhaler)
+                return Decimal(quantity) * factor, factor
+            # Fallback: assume quantity is already in base units
+            return Decimal(quantity), Decimal("1")
+        
+        # If no stock_unit, try to infer from units_per_pack
+        if units_per_pack and units_per_pack > 1 and selling_uom:
+            quantity_uom = selling_uom
+        elif base_uom:
+            quantity_uom = base_uom
+        else:
+            # Last resort: use units_per_pack directly
+            if units_per_pack and units_per_pack > 0:
+                return Decimal(quantity) * units_per_pack, units_per_pack
+            return Decimal(quantity), Decimal("1")
+    
     if not base_uom:
-        raise ValidationError({"base_uom": "Base unit is required"})
+        # If no base_uom, assume quantity is already in base units
+        return Decimal(quantity), Decimal("1")
+    
     if not selling_uom:
-        raise ValidationError({"selling_uom": "Selling unit is required"})
+        # If no selling_uom, use base_uom
+        selling_uom = base_uom
 
     q_uom_name = (quantity_uom.name or "").strip().upper()
     base_name = (base_uom.name or "").strip().upper()
