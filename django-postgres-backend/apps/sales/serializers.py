@@ -86,8 +86,14 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
     customer_city = serializers.CharField(write_only=True, required=False, allow_blank=True)
     customer_state_code = serializers.CharField(write_only=True, required=False, allow_blank=True)
     customer_pincode = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    
+    # Doctor name field
+    doctor_name = serializers.CharField(required=False, allow_blank=True)
 
     # Computed / read-only fields
+    # Note: We use a method field to return customer name from linked customer
+    # The write_only customer_name above is for creating new customers
+    customer_name_display = serializers.SerializerMethodField(read_only=True)
     total_paid = serializers.DecimalField(
         max_digits=14, decimal_places=4, read_only=True
     )
@@ -98,6 +104,12 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
     round_off_amount = serializers.DecimalField(
         max_digits=14, decimal_places=4, read_only=True
     )
+
+    def get_customer_name_display(self, obj):
+        """Return customer name for easy access in frontend"""
+        if obj.customer:
+            return obj.customer.name
+        return None
 
     class Meta:
         model = SalesInvoice

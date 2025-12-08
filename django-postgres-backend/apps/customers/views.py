@@ -166,3 +166,23 @@ class CustomerViewSet(viewsets.ModelViewSet):
         } for i in inv]
 
         return Response(rows)
+
+    @extend_schema(
+        tags=["Customers"],
+        summary="Search customers by phone number",
+        parameters=[
+            OpenApiParameter("phone", OpenApiTypes.STR, OpenApiParameter.QUERY, description="Phone number to search"),
+        ],
+        responses={200: CustomerSerializer(many=True)},
+    )
+    @action(detail=False, methods=["get"], url_path="search-by-phone")
+    def search_by_phone(self, request):
+        """Search customers by phone number - used for billing autocomplete"""
+        phone = request.query_params.get("phone", "").strip()
+        if not phone:
+            return Response([])
+        
+        # Search for customers with matching phone number
+        customers = Customer.objects.filter(phone__icontains=phone, is_active=True)[:10]
+        serializer = CustomerSerializer(customers, many=True)
+        return Response(serializer.data)
