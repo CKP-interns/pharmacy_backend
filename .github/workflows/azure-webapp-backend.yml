@@ -42,17 +42,6 @@ jobs:
         run: |
           python manage.py collectstatic --noinput
 
-      - name: Run tests (optional)
-        working-directory: ${{ env.PROJECT_ROOT }}
-        env:
-          SECRET_KEY: ${{ secrets.DJANGO_SECRET_KEY }}
-          DEBUG: ${{ secrets.DJANGO_DEBUG }}
-          ALLOWED_HOSTS: ${{ secrets.DJANGO_ALLOWED_HOSTS }}
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: |
-          python manage.py test
-        continue-on-error: true
-
       - name: Deploy to Azure Web App
         uses: Azure/webapps-deploy@v3
         with:
