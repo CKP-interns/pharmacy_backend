@@ -19,3 +19,6 @@ pdfplumber
 pytesseract
 python-dateutil
 Pillow
+
+# Excel file handling
+openpyxl
