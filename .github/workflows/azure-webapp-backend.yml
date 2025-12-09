@@ -53,10 +53,14 @@ jobs:
           python manage.py test
         continue-on-error: true
 
+      - name: Azure Login (using Publish Profile)
+        uses: azure/login@v2
+        with:
+          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_PHARMA }}
+
       - name: Deploy to Azure Web App
         uses: Azure/webapps-deploy@v3
         with:
           app-name: ${{ env.AZURE_WEBAPP_NAME }}
-          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_PHARMA }}
           package: ${{ env.PROJECT_ROOT }}
 
