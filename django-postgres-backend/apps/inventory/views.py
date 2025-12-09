@@ -16,6 +16,7 @@ from .services import (
     stock_summary,
     stock_status_for_quantity,
     global_inventory_rows,
+    convert_quantity_to_base,
 )
 from .models import RackLocation, InventoryMovement
 from apps.locations.models import Location
@@ -738,11 +739,16 @@ class MedicineDetailView(MedicineViewMixin, APIView):
             medicine_payload["id"] = batch.product_id
         product = self._upsert_product(medicine_payload)
         
-        # Calculate stock difference if quantity changed
+        # Calculate stock difference using the serializer's calculated quantity_base
+        # Frontend sends total quantity (current + change), serializer converts to base units
+        # Compare new total base to old total base to get the difference
         old_qty_base = batch.initial_quantity_base
         updated_batch = self._update_batch(batch, batch_payload)
         new_qty_base = Decimal(batch_payload.get("quantity_base", updated_batch.initial_quantity_base))
         qty_diff = new_qty_base - old_qty_base
+        
+        # Update the batch with the new total quantity
+        updated_batch = self._update_batch(batch, batch_payload)
         
         # Create movement if quantity changed (can be positive or negative)
         movement_id = None

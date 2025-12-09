@@ -232,8 +232,69 @@ def convert_quantity_to_base(
     # This handles the case where base_uom might not be set but we have packaging info
     if quantity_uom:
         q_uom_name = (quantity_uom.name or "").strip().upper()
+        # If stock_unit is "loose" and we have packaging fields, use them first
+        if stock_unit == "loose":
+            # Tablet/Capsule
+            if tablets_per_strip:
+                factor = Decimal(tablets_per_strip)
+                result = quantity_abs * factor
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.info(f"convert_quantity_to_base: Using packaging fields for loose (quantity_uom provided), "
+                           f"quantity={quantity_abs}, tablets_per_strip={tablets_per_strip}, "
+                           f"factor={factor}, result={result}")
+                return apply_sign(result, factor)
+            elif capsules_per_strip:
+                factor = Decimal(capsules_per_strip)
+                result = quantity_abs * factor
+                return apply_sign(result, factor)
+            # Liquid
+            elif ml_per_bottle:
+                factor = ml_per_bottle
+                result = quantity_abs * factor
+                return apply_sign(result, factor)
+            # Injection/Vial
+            elif ml_per_vial:
+                factor = ml_per_vial
+                result = quantity_abs * factor
+                return apply_sign(result, factor)
+            # Ointment/Cream/Gel
+            elif grams_per_tube:
+                factor = grams_per_tube
+                result = quantity_abs * factor
+                return apply_sign(result, factor)
+            # Powder/Sachet
+            elif grams_per_sachet:
+                factor = grams_per_sachet
+                result = quantity_abs * factor
+                return apply_sign(result, factor)
+            # Soap/Bar
+            elif grams_per_bar:
+                factor = grams_per_bar
+                result = quantity_abs * factor
+                return apply_sign(result, factor)
+            # Pack/Generic
+            elif pieces_per_pack:
+                factor = Decimal(pieces_per_pack)
+                result = quantity_abs * factor
+                return apply_sign(result, factor)
+            # Gloves
+            elif pairs_per_pack:
+                factor = Decimal(pairs_per_pack)
+                result = quantity_abs * factor
+                return apply_sign(result, factor)
+            # Cotton/Gauze
+            elif grams_per_pack:
+                factor = grams_per_pack
+                result = quantity_abs * factor
+                return apply_sign(result, factor)
+            # Inhaler
+            elif doses_per_inhaler:
+                factor = Decimal(doses_per_inhaler)
+                result = quantity_abs * factor
+                return apply_sign(result, factor)
         # If stock_unit is "box" and we have packaging fields, use them
-        if stock_unit == "box":
+        elif stock_unit == "box":
             # Tablet/Capsule
             if (tablets_per_strip or capsules_per_strip) and strips_per_box:
                 per_strip = tablets_per_strip or capsules_per_strip
