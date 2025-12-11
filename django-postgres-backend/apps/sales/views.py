@@ -89,13 +89,14 @@ class SalesInvoiceViewSet(viewsets.ModelViewSet):
             amount = request.data.get("amount")
             from decimal import Decimal, ROUND_HALF_UP
             if amount in (None, "auto", ""):
-                amount = invoice.net_total
+                # Ensure net_total is properly quantized to 4 decimal places
+                amount = Decimal(str(invoice.net_total)).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
             else:
-                amount = Decimal(str(amount))
+                # Convert to Decimal and quantize to 4 decimal places
+                amount = Decimal(str(amount)).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
             
-            # Round amount to 4 decimal places to ensure it fits within max_digits=14, decimal_places=4
-            # This ensures no more than 14 total digits (10 before decimal + 4 after)
-            amount = amount.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+            # Normalize to remove trailing zeros (ensures proper validation)
+            amount = amount.normalize()
             
             mode = request.data.get("mode") or "CASH"
             pay_ser = SalesPaymentSerializer(data={

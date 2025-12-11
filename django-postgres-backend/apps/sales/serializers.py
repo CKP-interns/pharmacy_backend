@@ -76,11 +76,14 @@ class SalesPaymentSerializer(serializers.ModelSerializer):
     def validate_amount(self, v):
         if v <= 0:
             raise serializers.ValidationError("Payment amount must be > 0")
-        # Round to 4 decimal places to ensure it fits within max_digits=14, decimal_places=4
+        # Convert to Decimal and quantize to 4 decimal places to ensure it fits within max_digits=14, decimal_places=4
         # This ensures no more than 14 total digits (10 before decimal + 4 after)
-        if isinstance(v, Decimal):
-            v = v.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
-        return v
+        if not isinstance(v, Decimal):
+            v = Decimal(str(v))
+        # Quantize to exactly 4 decimal places
+        v = v.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+        # Normalize to remove trailing zeros (ensures proper validation)
+        return v.normalize()
 
 
 class SalesInvoiceSerializer(serializers.ModelSerializer):

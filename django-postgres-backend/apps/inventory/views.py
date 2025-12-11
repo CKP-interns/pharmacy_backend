@@ -601,7 +601,7 @@ class MedicineViewMixin:
 
 
 class AddMedicineView(MedicineViewMixin, APIView):
-    permission_classes = LICENSED_ADMIN_PERMISSIONS
+    permission_classes = LICENSED_PERMISSIONS  # Changed from LICENSED_ADMIN_PERMISSIONS to allow all authenticated users
     @extend_schema(
         tags=["Inventory"],
         summary="Add new medicine (master + first batch) in one call (Admin)",
@@ -723,8 +723,8 @@ class MedicineDetailView(MedicineViewMixin, APIView):
 
     @transaction.atomic
     def put(self, request, batch_id: int):
-        if not request.user.is_staff:
-            raise permissions.PermissionDenied("Only administrators can update medicines.")
+        # All authenticated users with active license can update medicines
+        # (Clients are the users, so they need full access)
         serializer = UpdateMedicineRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         payload = serializer.validated_data
@@ -876,8 +876,8 @@ class MedicineDetailView(MedicineViewMixin, APIView):
 
     @transaction.atomic
     def delete(self, request, batch_id: int):
-        if not request.user.is_staff:
-            raise permissions.PermissionDenied("Only administrators can delete medicines.")
+        # All authenticated users with active license can delete medicines
+        # (Clients are the users, so they need full access)
         try:
             batch = self.get_batch(batch_id)
         except BatchLot.DoesNotExist:

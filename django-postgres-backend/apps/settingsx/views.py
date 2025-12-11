@@ -1,6 +1,7 @@
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework import generics, viewsets, status, permissions
+from rest_framework.permissions import IsAuthenticated
 from drf_spectacular.utils import extend_schema, OpenApiExample, OpenApiParameter, OpenApiTypes
 from .models import SettingKV, BusinessProfile, DocCounter
 from .serializers import (
@@ -12,6 +13,7 @@ from rest_framework import viewsets
 from . import services
 from .services_backup import restore_backup, create_backup
 from apps.governance.permissions import IsAdmin
+from core.permissions import HasActiveSystemLicense
 
 
 class HealthView(APIView):
@@ -382,7 +384,7 @@ class DocCounterNextView(APIView):
 
 
 class BackupRestoreView(APIView):
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAuthenticated, HasActiveSystemLicense]  # Changed from IsAdmin to allow all authenticated users
     @extend_schema(
         tags=["Settings"],
         summary="Restore database from a backup archive (Admin)",
@@ -402,7 +404,7 @@ class BackupRestoreView(APIView):
 
 
 class BackupCreateView(APIView):
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAuthenticated, HasActiveSystemLicense]  # Changed from IsAdmin to allow all authenticated users
     @extend_schema(
         tags=["Settings"],
         summary="Create a full backup archive (Admin)",
