@@ -30,6 +30,7 @@ from apps.governance.services import audit
 from django.db.models.functions import TruncMonth
 from django.db.models import Sum
 import os
+import tempfile
 from django.core.files.storage import default_storage
 from .models import Purchase, PurchaseLine
 from apps.catalog.models import Product
@@ -593,14 +594,19 @@ class PurchaseImportView(APIView):
         if not vendor_id or not location_id:
             return Response({"detail": "vendor_id and location_id are required"}, status=400)
 
-        tmp_path = None
+        tmp_file_path = None
         try:
             vendor = get_object_or_404(Vendor, pk=vendor_id)
             location = get_object_or_404(Location, pk=location_id)
 
-            # TEMP save file
-            tmp_path = default_storage.save(f"temp_import/{file.name}", file)
-            tmp_file_path = default_storage.path(tmp_path)
+            # Create a temporary file on local filesystem (works on both local and Azure)
+            # Azure App Service has a temp directory at /tmp or /local/temp
+            suffix = os.path.splitext(file.name)[1] or ''
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix, mode='wb') as tmp_file:
+                # Read and write the uploaded file content to temporary file
+                for chunk in file.chunks():
+                    tmp_file.write(chunk)
+                tmp_file_path = tmp_file.name
 
             # Detect file type
             ext = file.name.lower().split(".")[-1]
@@ -698,8 +704,12 @@ class PurchaseImportView(APIView):
             return Response({"detail": "Import error", "error": str(exc)}, status=500)
 
         finally:
-            if tmp_path and default_storage.exists(tmp_path):
-                default_storage.delete(tmp_path)
+            # Clean up temporary file
+            if tmp_file_path and os.path.exists(tmp_file_path):
+                try:
+                    os.unlink(tmp_file_path)
+                except Exception as cleanup_error:
+                    logger.warning("Failed to delete temporary file %s: %s", tmp_file_path, cleanup_error)
 
 
 

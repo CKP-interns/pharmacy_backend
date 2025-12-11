@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from decimal import Decimal, ROUND_HALF_UP
 from django.db.models import Sum
+from django.db import transaction
 from .models import SalesInvoice, SalesLine, SalesPayment
 from apps.catalog.models import Product, BatchLot
 from apps.customers.models import Customer
@@ -15,7 +16,32 @@ CURRENCY_QUANT = Decimal("0.01")
 
 class SalesLineSerializer(serializers.ModelSerializer):
     product_name = serializers.CharField(source="product.name", read_only=True)
+    hsn_code = serializers.SerializerMethodField(read_only=True)
+    expiry_date = serializers.SerializerMethodField(read_only=True)
+    batch_no = serializers.SerializerMethodField(read_only=True)
+    gst_percent = serializers.SerializerMethodField(read_only=True)
 
+    def get_hsn_code(self, obj):
+        """Get HSN code from the product"""
+        if obj.product and hasattr(obj.product, 'hsn') and obj.product.hsn:
+            return obj.product.hsn
+        return None
+
+    def get_expiry_date(self, obj):
+        """Get expiry date from batch_lot"""
+        if obj.batch_lot and obj.batch_lot.expiry_date:
+            return obj.batch_lot.expiry_date.strftime("%d/%m/%Y")
+        return None
+
+    def get_batch_no(self, obj):
+        """Get batch number from batch_lot"""
+        if obj.batch_lot and obj.batch_lot.batch_no:
+            return obj.batch_lot.batch_no
+        return None
+
+    def get_gst_percent(self, obj):
+        """Alias for tax_percent to match frontend expectations"""
+        return obj.tax_percent
 
     class Meta:
         model = SalesLine
@@ -271,6 +297,7 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
             )
         return allocations
 
+    @transaction.atomic
     def create(self, validated_data):
         lines = validated_data.pop("lines", [])
 
@@ -320,25 +347,38 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
         # -------------------- PAYMENT HANDLING --------------------
         # If client provided payment_method and amount_paid -> create SalesPayment and update invoice
         if payment_method and amount_paid:
-            # create payment record
+            # Ensure invoice and lines are fully saved before posting
+            invoice.save()
+            # Refresh to ensure all relationships are loaded
+            invoice.refresh_from_db()
+            
+            # Call post_invoice service to properly calculate totals and mark as posted
+            # This ensures totals are correctly calculated, inventory is deducted, and invoice is posted
+            from apps.sales import services
+            try:
+                services.post_invoice(actor=self.context["request"].user, invoice_id=invoice.id)
+                invoice.refresh_from_db()
+            except Exception as e:
+                # If post_invoice fails, re-raise the error
+                raise serializers.ValidationError(f"Failed to post invoice: {str(e)}")
+            
+            # create payment record (this will auto-update payment status via save() hook)
             SalesPayment.objects.create(
-                invoice=invoice,
-                payment_method_id=payment_method,
+                sale_invoice=invoice,
+                mode=payment_method,
                 amount=Decimal(amount_paid),
                 received_by=self.context["request"].user
             )
-            total_paid = Decimal(amount_paid)
+            
+            # Refresh invoice to get updated payment status
+            invoice.refresh_from_db()
 
             # set invoice's payment_type to the payment_method used (if not provided separately)
             try:
                 invoice.payment_type_id = payment_type.id if hasattr(payment_type, "id") else payment_type or payment_method
             except Exception:
                 invoice.payment_type_id = payment_method
-
-            # Mark invoice as posted and set posted metadata
-            invoice.status = SalesInvoice.Status.POSTED
-            invoice.posted_at = timezone.now()
-            invoice.posted_by = self.context["request"].user
+            invoice.save(update_fields=["payment_type"])
 
         # If client only passed payment_type (invoice-level) but no immediate payment, attach it
         elif payment_type:
@@ -347,21 +387,14 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
             except Exception:
                 # If payment_type is provided as primary key:
                 invoice.payment_type_id = payment_type
+            invoice.save(update_fields=["payment_type"])
 
-        # Update payment status based on totals
-        invoice.total_paid = total_paid
-        # outstanding = net - total_paid
-        invoice.outstanding = (net - total_paid).quantize(CURRENCY_QUANT)
-
-        # Set payment_status enum
-        if total_paid == Decimal("0.00"):
+        # If no payment was made, set default status and save
+        if not (payment_method and amount_paid):
+            invoice.total_paid = Decimal("0.00")
+            invoice.outstanding = net
             invoice.payment_status = SalesInvoice.PaymentStatus.CREDIT
-        elif total_paid >= net:
-            invoice.payment_status = SalesInvoice.PaymentStatus.PAID
-        else:
-            invoice.payment_status = SalesInvoice.PaymentStatus.PARTIAL
-
-        invoice.save()
+            invoice.save()
 
         return invoice
 
