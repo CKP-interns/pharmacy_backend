@@ -119,7 +119,7 @@ def _parse_decimal(v):
         return Decimal("0")
 
 
-def extract_purchase_items_from_pdf(path: str):
+def extract_purchase_items_from_pdf(file_content_or_path):
     """
     FINAL WORKING VERSION FOR YOUR PDF FORMAT.
     Your PDF has lines like:
@@ -127,16 +127,31 @@ def extract_purchase_items_from_pdf(path: str):
         2 NOSKURF LOTION 150ML 1 0
     Pattern:
         SNO  NAME  QTY  FREE
+    
+    Accepts either a file path (str) or file-like object (BytesIO) for in-memory processing.
+    pdfplumber.open() can handle both file paths and file-like objects.
     """
 
     items = []
 
     # 1. Extract RAW text from PDF
     full_text = ""
-    with pdfplumber.open(path) as pdf:
-        for page in pdf.pages:
-            txt = page.extract_text() or ""
-            full_text += "\n" + txt
+    try:
+        # pdfplumber.open() can accept both file paths and file-like objects (BytesIO, etc.)
+        with pdfplumber.open(file_content_or_path) as pdf:
+            for page in pdf.pages:
+                txt = page.extract_text() or ""
+                full_text += "\n" + txt
+    except Exception as e:
+        # Check if it's a poppler dependency issue
+        err_msg = str(e).lower()
+        if "pdftoppm" in err_msg or "poppler" in err_msg or "command not found" in err_msg:
+            raise RuntimeError(
+                "PDF processing requires poppler-utils system package. "
+                "On Linux/Azure, install with: sudo apt-get install poppler-utils"
+            ) from e
+        # Re-raise other errors
+        raise
 
     if not full_text.strip():
         return []

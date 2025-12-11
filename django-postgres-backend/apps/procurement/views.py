@@ -30,8 +30,7 @@ from apps.governance.services import audit
 from django.db.models.functions import TruncMonth
 from django.db.models import Sum
 import os
-import tempfile
-from django.core.files.storage import default_storage
+import io
 from .models import Purchase, PurchaseLine
 from apps.catalog.models import Product
 from apps.procurement.utils_pdf import extract_purchase_items_from_pdf
@@ -594,7 +593,6 @@ class PurchaseImportView(APIView):
         if not vendor_id or not location_id:
             return Response({"detail": "vendor_id and location_id are required"}, status=400)
 
-        tmp_file_path = None
         try:
             vendor = get_object_or_404(Vendor, pk=vendor_id)
             location = get_object_or_404(Location, pk=location_id)
@@ -622,90 +620,65 @@ class PurchaseImportView(APIView):
             if ext not in ["pdf", "csv", "xlsx", "xls"]:
                 return Response({"detail": f"Unsupported file type. File: {file_name or 'unknown'}, Detected: {ext or 'none'}. Supported types are: CSV, PDF, XLSX, XLS"}, status=400)
 
-            # Create a temporary file on local filesystem (works on both local and Azure)
-            # Python's tempfile module automatically uses the appropriate temp directory:
-            # - Local Windows: %TEMP% or %TMP% (usually C:\Users\...\AppData\Local\Temp)
-            # - Local Linux/Mac: /tmp
-            # - Azure App Service (Linux): /tmp (writable temp directory)
-            # The tempfile module handles all this automatically - no need to specify a path
-            suffix = f'.{ext}' if not file_name or '.' not in file_name else os.path.splitext(file_name)[1]
-            try:
-                # Use mkstemp for better control - it returns (file_descriptor, file_path)
-                # This works reliably on both local and Azure
-                temp_dir = tempfile.gettempdir()  # Gets the temp directory automatically
-                logger.info(f"Creating temp file in directory: {temp_dir}")
-                
-                tmp_fd, tmp_file_path = tempfile.mkstemp(suffix=suffix, dir=temp_dir)
-                try:
-                    # Write file content using the file descriptor
-                    with os.fdopen(tmp_fd, 'wb') as tmp_file:
-                        bytes_written = 0
-                        for chunk in file.chunks():
-                            tmp_file.write(chunk)
-                            bytes_written += len(chunk)
-                        tmp_file.flush()  # Ensure all data is written
-                    logger.info(f"Temporary file created: {tmp_file_path}, size: {bytes_written} bytes")
-                    
-                    # Verify the file was written
-                    if not os.path.exists(tmp_file_path):
-                        return Response({"detail": "Failed to save uploaded file. Please try again."}, status=500)
-                    file_size = os.path.getsize(tmp_file_path)
-                    if file_size == 0:
-                        return Response({"detail": "Uploaded file is empty. Please ensure the file contains data."}, status=400)
-                    if file_size != bytes_written:
-                        logger.warning(f"File size mismatch: expected {bytes_written}, got {file_size}")
-                except Exception as write_error:
-                    # If writing failed, close the file descriptor and clean up
-                    try:
-                        os.close(tmp_fd)
-                    except:
-                        pass
-                    if os.path.exists(tmp_file_path):
-                        try:
-                            os.unlink(tmp_file_path)
-                        except:
-                            pass
-                    raise write_error
-            except PermissionError as perm_error:
-                logger.error(f"Permission error creating temp file in {tempfile.gettempdir()}: {perm_error}", exc_info=True)
-                return Response({
-                    "detail": f"Permission error accessing temp directory ({tempfile.gettempdir()}). Please contact administrator."
-                }, status=500)
-            except Exception as file_error:
-                logger.error(f"Error creating temporary file: {file_error}", exc_info=True)
-                import traceback
-                logger.error(f"Traceback: {traceback.format_exc()}")
-                return Response({
-                    "detail": f"Failed to process uploaded file: {str(file_error)}. Temp dir: {tempfile.gettempdir()}"
-                }, status=500)
+            # Process file in-memory to avoid filesystem permission issues on Azure
+            # Read the entire file into memory
+            import io
+            file_bytes = b""
+            bytes_read = 0
+            for chunk in file.chunks():
+                file_bytes += chunk
+                bytes_read += len(chunk)
+            
+            if bytes_read == 0:
+                return Response({"detail": "Uploaded file is empty. Please ensure the file contains data."}, status=400)
+            
+            logger.info(f"Processing {ext.upper()} file in-memory: {file_name}, size: {bytes_read} bytes")
 
-            # Process file based on type
+            # Process file based on type - all in-memory
+            items = None
             try:
                 if ext == "pdf":
-                    logger.info(f"Processing PDF file: {tmp_file_path}, size: {os.path.getsize(tmp_file_path)}")
-                    items = extract_purchase_items_from_pdf(tmp_file_path)
-                    logger.info(f"PDF processing completed, found {len(items) if items else 0} items")
-
+                    # pdfplumber.open() can accept BytesIO directly
+                    file_obj = io.BytesIO(file_bytes)
+                    try:
+                        items = extract_purchase_items_from_pdf(file_obj)
+                        logger.info(f"PDF processing completed, found {len(items) if items else 0} items")
+                    except Exception as pdf_err:
+                        # Check for common pdfplumber errors
+                        err_msg = str(pdf_err).lower()
+                        if "pdftoppm" in err_msg or "poppler" in err_msg or "command not found" in err_msg:
+                            logger.error(f"PDF processing failed - missing system dependency (poppler-utils): {pdf_err}", exc_info=True)
+                            return Response({
+                                "detail": "PDF processing failed. The server is missing required system libraries (poppler-utils). Please contact the administrator or use CSV format instead."
+                            }, status=500)
+                        else:
+                            raise  # Re-raise if it's a different error
+                    
                 elif ext == "csv":
-                    logger.info(f"Processing CSV file: {tmp_file_path}, size: {os.path.getsize(tmp_file_path)}")
+                    # Process CSV directly from bytes
                     from .utils import extract_items_from_csv
-                    items = extract_items_from_csv(tmp_file_path)
+                    items = extract_items_from_csv(file_bytes)
                     logger.info(f"CSV processing completed, found {len(items) if items else 0} items")
-
+                    
                 elif ext in ["xlsx", "xls"]:
-                    logger.info(f"Processing Excel file: {tmp_file_path}, size: {os.path.getsize(tmp_file_path)}")
+                    # openpyxl.load_workbook() can accept BytesIO directly
                     from .utils import extract_items_from_excel
-                    items = extract_items_from_excel(tmp_file_path)
+                    file_obj = io.BytesIO(file_bytes)
+                    items = extract_items_from_excel(file_obj)
                     logger.info(f"Excel processing completed, found {len(items) if items else 0} items")
+                    
             except ImportError as import_err:
-                logger.error(f"Missing dependency for {ext} file: {import_err}")
+                logger.error(f"Missing Python dependency for {ext} file: {import_err}", exc_info=True)
+                missing_module = str(import_err).split("'")[1] if "'" in str(import_err) else "unknown"
                 return Response({
-                    "detail": f"Failed to process {ext.upper()} file. Required library may not be installed: {str(import_err)}"
+                    "detail": f"Failed to process {ext.upper()} file. Required Python library '{missing_module}' is not installed on the server."
                 }, status=500)
             except Exception as proc_err:
-                logger.error(f"Error processing {ext} file {tmp_file_path}: {proc_err}", exc_info=True)
+                logger.error(f"Error processing {ext} file: {proc_err}", exc_info=True)
+                import traceback
+                logger.error(f"Full traceback: {traceback.format_exc()}")
                 return Response({
-                    "detail": f"Failed to process {ext.upper()} file: {str(proc_err)}. Please check the file format."
+                    "detail": f"Failed to process {ext.upper()} file: {str(proc_err)}. Please check the file format and ensure it's valid."
                 }, status=500)
 
             if not items:
@@ -818,13 +791,6 @@ class PurchaseImportView(APIView):
                     "detail": f"Failed to import file: {error_msg} (Error type: {error_type}). Please check server logs for more details."
                 }, status=500)
 
-        finally:
-            # Clean up temporary file
-            if tmp_file_path and os.path.exists(tmp_file_path):
-                try:
-                    os.unlink(tmp_file_path)
-                except Exception as cleanup_error:
-                    logger.warning("Failed to delete temporary file %s: %s", tmp_file_path, cleanup_error)
 
 
 

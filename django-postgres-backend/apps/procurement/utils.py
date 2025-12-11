@@ -48,12 +48,42 @@ from decimal import Decimal
 import re
 import csv
 
-def extract_items_from_csv(path):
+def extract_items_from_csv(file_content_or_path):
+    """
+    Extract items from CSV file.
+    Accepts either a file path (str) or file content (bytes/str) for in-memory processing.
+    """
     items = []
 
-    # Try to read using normal CSV first
-    with open(path, "r", encoding="utf-8") as f:
-        lines = f.read()
+    # Handle both file path (string) and file content (bytes/str/io object)
+    if isinstance(file_content_or_path, str) and os.path.exists(file_content_or_path):
+        # Legacy: file path provided
+        try:
+            with open(file_content_or_path, "r", encoding="utf-8") as f:
+                lines = f.read()
+        except UnicodeDecodeError:
+            try:
+                with open(file_content_or_path, "r", encoding="latin-1") as f:
+                    lines = f.read()
+            except UnicodeDecodeError:
+                with open(file_content_or_path, "r", encoding="utf-8", errors="ignore") as f:
+                    lines = f.read()
+    else:
+        # In-memory processing: file_content_or_path is bytes or string
+        if isinstance(file_content_or_path, bytes):
+            # Try UTF-8 first
+            try:
+                lines = file_content_or_path.decode("utf-8")
+            except UnicodeDecodeError:
+                # Fallback to latin-1
+                try:
+                    lines = file_content_or_path.decode("latin-1")
+                except UnicodeDecodeError:
+                    # Last resort: ignore errors
+                    lines = file_content_or_path.decode("utf-8", errors="ignore")
+        else:
+            # Already a string
+            lines = file_content_or_path
 
     # Normalize spacing → convert multiple spaces/tabs into single comma
     normalized = ",".join(
@@ -106,12 +136,14 @@ def extract_items_from_csv(path):
     return items
 
 
-def extract_items_from_excel(path):
+def extract_items_from_excel(file_content_or_path):
     """
     Extract purchase items from Excel (.xlsx)
     Expected same columns as CSV.
+    Accepts either a file path (str) or file-like object (BytesIO) for in-memory processing.
     """
-    wb = openpyxl.load_workbook(path, data_only=True)
+    # openpyxl.load_workbook can accept both file paths and file-like objects
+    wb = openpyxl.load_workbook(file_content_or_path, data_only=True)
     ws = wb.active
 
     # Read header row
