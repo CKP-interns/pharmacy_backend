@@ -1,0 +1,69 @@
+# Exclude files and directories from Azure deployment to speed up deployment
+
+# Python cache and compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Testing
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Documentation
+*.md
+!README.md
+docs/
+
+# Development files
+.env
+.env.local
+*.log
+*.pot
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Seed data (not needed in production)
+seed/
+
+# Postman collections (not needed in production)
+postman/
+
+# Temporary files
+TEMP_plan_note.txt
+run_demo.py
+package-lock.json
+
+# Schema files (if not needed at runtime)
+schema.yaml
+
+# Media files (should be in Azure Storage, not in deployment)
+media/
+
+# Static files (will be collected during deployment)
+static/
+staticfiles/
+
+# Migration files (keep these, but exclude if you want)
+# migrations/
+
