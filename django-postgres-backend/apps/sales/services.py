@@ -41,14 +41,23 @@ def write_movement(location_id, batch_lot_id, qty_delta, reason, ref_doc_type, r
 @transaction.atomic
 def post_invoice(actor, invoice_id):
     """Post a draft invoice into a confirmed sale. Idempotent: re-posting a POSTED invoice returns no-op."""
-    inv = (
-        SalesInvoice.objects.select_for_update()
-        .prefetch_related("lines__batch_lot", "lines__product", "payments")
-        .get(pk=invoice_id)
-    )
+    # Use select_for_update to lock the invoice row and prevent concurrent modifications
+    # Skip locked wait to avoid deadlocks - if locked, raise error instead
+    try:
+        inv = (
+            SalesInvoice.objects.select_for_update(nowait=True)
+            .prefetch_related("lines__batch_lot", "lines__product", "payments")
+            .get(pk=invoice_id)
+        )
+    except SalesInvoice.DoesNotExist:
+        raise ValidationError(f"Invoice {invoice_id} not found")
+    except Exception as e:
+        # If invoice is locked (another transaction is modifying it), raise error
+        raise ValidationError(f"Invoice is currently being processed. Please try again. Error: {str(e)}")
 
     # Idempotency: already posted → no-op
     if inv.status == SalesInvoice.Status.POSTED:
+        # Return success but don't re-process
         return {"invoice_no": inv.invoice_no, "status": inv.status}
 
     if inv.status != SalesInvoice.Status.DRAFT:
@@ -65,15 +74,22 @@ def post_invoice(actor, invoice_id):
     # -----------------------------------------
     # INVENTORY DEDUCTION + TOTAL COMPUTATION
     # -----------------------------------------
-    for line in inv.lines.all():
-
+    # Process all lines and verify stock availability before making any changes
+    lines_list = list(inv.lines.all())
+    if not lines_list:
+        raise ValidationError("Invoice has no line items to post")
+    
+    # First pass: verify all stock is available (prevents partial deductions)
+    for line in lines_list:
         available = stock_on_hand(inv.location_id, line.batch_lot_id)
         if available < line.qty_base:
             raise ValidationError(
-                f"Insufficient stock for batch {line.batch_lot.batch_no}: "
+                f"Insufficient stock for {line.product.name} (Batch {line.batch_lot.batch_no}): "
                 f"available {available}, required {line.qty_base}"
             )
 
+    # Second pass: deduct stock and calculate totals (all-or-nothing approach)
+    for line in lines_list:
         qty = Decimal(line.qty_base)
         rate = Decimal(line.rate_per_base)
         disc = Decimal(line.discount_amount or 0)
@@ -92,7 +108,7 @@ def post_invoice(actor, invoice_id):
         tax_total += tax_amt
         net += line_total
 
-        # Stock OUT movement
+        # Stock OUT movement - deduct inventory
         write_movement(inv.location_id, line.batch_lot_id, -qty, "SALE", "SalesInvoice", inv.id)
 
     # -----------------------------------------
