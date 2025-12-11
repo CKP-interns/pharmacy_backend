@@ -5,9 +5,9 @@ from drf_spectacular.utils import extend_schema, OpenApiExample, OpenApiParamete
 from .models import SettingKV, BusinessProfile, DocCounter
 from .serializers import (
     SettingsSerializer, BusinessProfileSerializer, DocCounterSerializer,
-    PaymentMethodSerializer, PaymentTermSerializer, NotificationSettingsSerializer, TaxBillingSettingsSerializer, AlertThresholdsSerializer,
+    PaymentMethodSerializer, NotificationSettingsSerializer, TaxBillingSettingsSerializer, AlertThresholdsSerializer,
 )
-from .models import PaymentMethod, PaymentTerm, NotificationSettings, TaxBillingSettings, AlertThresholds
+from .models import PaymentMethod, NotificationSettings, TaxBillingSettings, AlertThresholds
 from rest_framework import viewsets
 from . import services
 from .services_backup import restore_backup, create_backup
@@ -39,6 +39,83 @@ class BusinessProfileView(generics.RetrieveUpdateAPIView):
     def get_object(self):
         obj, _ = BusinessProfile.objects.get_or_create(id=1)
         return obj
+    
+    def update(self, request, *args, **kwargs):
+        """Update business profile and ensure default location exists"""
+        response = super().update(request, *args, **kwargs)
+        # After saving business profile, ensure default location exists
+        self._ensure_default_location()
+        return response
+    
+    def create(self, request, *args, **kwargs):
+        """Create business profile (POST) and ensure default location exists"""
+        # Since get_object uses get_or_create, we can use update logic
+        obj = self.get_object()
+        serializer = self.get_serializer(obj, data=request.data, partial=False)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        # After saving business profile, ensure default location exists
+        self._ensure_default_location()
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    
+    def post(self, request, *args, **kwargs):
+        """Handle POST requests (create)"""
+        return self.create(request, *args, **kwargs)
+    
+    def _ensure_default_location(self):
+        """Ensure a default location with ID 1 exists, using business profile data"""
+        from apps.locations.models import Location
+        from django.db import IntegrityError
+        
+        business_profile = self.get_object()
+        
+        # Try to get location with ID 1 first
+        try:
+            location = Location.objects.get(id=1)
+            created = False
+        except Location.DoesNotExist:
+            # Location with ID 1 doesn't exist, try to create it
+            # Generate a unique code if LOC-001 already exists
+            code = 'LOC-001'
+            if Location.objects.filter(code=code).exists():
+                # Find next available code
+                counter = 1
+                while Location.objects.filter(code=f'LOC-{counter:03d}').exists():
+                    counter += 1
+                code = f'LOC-{counter:03d}'
+            
+            try:
+                location = Location.objects.create(
+                    id=1,
+                    code=code,
+                    name=business_profile.business_name or 'Main Location',
+                    type=Location.Type.SHOP,
+                    address=business_profile.address or '',
+                    gstin=business_profile.gst_number or '',
+                    is_active=True,
+                )
+                created = True
+            except IntegrityError:
+                # If creation fails (e.g., ID 1 was created by another process), get it
+                location = Location.objects.get(id=1)
+                created = False
+        
+        # If location already exists but business profile has updated data, update location
+        if not created and business_profile.business_name:
+            # Update location name and address if business profile has them
+            update_fields = []
+            if business_profile.business_name and location.name != business_profile.business_name:
+                location.name = business_profile.business_name
+                update_fields.append('name')
+            if business_profile.address and location.address != business_profile.address:
+                location.address = business_profile.address
+                update_fields.append('address')
+            if business_profile.gst_number and location.gstin != business_profile.gst_number:
+                location.gstin = business_profile.gst_number
+                update_fields.append('gstin')
+            
+            if update_fields:
+                location.save(update_fields=update_fields)
 
 
 def _build_group_settings() -> dict:
@@ -354,20 +431,4 @@ class PaymentMethodViewSet(viewsets.ModelViewSet):
         return qs
 
 
-class PaymentTermViewSet(viewsets.ModelViewSet):
-    queryset = PaymentTerm.objects.all()
-    serializer_class = PaymentTermSerializer
-
-    def get_queryset(self):
-        qs = super().get_queryset()
-        q = self.request.query_params.get("q")
-        if q:
-            qs = qs.filter(models.Q(name__icontains=q) | models.Q(description__icontains=q))
-        is_active = self.request.query_params.get("is_active")
-        if is_active in ("true", "false"):
-            qs = qs.filter(is_active=(is_active == "true"))
-        ordering = self.request.query_params.get("ordering")
-        if ordering in ("name", "-name", "created_at", "-created_at"):
-            qs = qs.order_by(ordering)
-        return qs
 

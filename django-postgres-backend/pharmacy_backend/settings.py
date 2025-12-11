@@ -9,20 +9,24 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # This is safe - if .env doesn't exist, no error is thrown
 load_dotenv(BASE_DIR / ".env")
 
+# Detect if we're running on Azure (Azure sets WEBSITE_HOSTNAME)
+IS_AZURE = bool(os.environ.get("WEBSITE_HOSTNAME"))
+
 # Database configuration using dj-database-url
 # Azure-friendly: supports both DATABASE_URL and fallback DB_* env vars
+# Local-friendly: falls back to SQLite if no database config is found
 db_url = os.environ.get("DATABASE_URL")
 
 # Fallback: build URL from individual DB_* environment variables if DATABASE_URL is not set
 if not db_url:
-    db_host = os.environ.get("DB_HOST")
-    db_name = os.environ.get("DB_NAME")
+    db_host = os.environ.get("DB_HOST", "localhost")  # Default to localhost for local dev
+    db_name = os.environ.get("DB_NAME", "pharmacy_inventorydb")  # Default database name
     
     # Only build fallback URL if we have at least DB_HOST and DB_NAME
     if db_host and db_name:
-        db_user = os.environ.get("DB_USER", "")
-        db_password = os.environ.get("DB_PASSWORD", "")
-        db_port = os.environ.get("DB_PORT", "5432")
+        db_user = os.environ.get("DB_USER", "postgres")  # Default user
+        db_password = os.environ.get("DB_PASSWORD", "root")  # No default password - user must set it
+        db_port = os.environ.get("DB_PORT", "5432")  # Default port
         
         # Build PostgreSQL connection URL
         if db_user and db_password:
@@ -32,44 +36,81 @@ if not db_url:
         else:
             db_url = f"postgres://{db_host}:{db_port}/{db_name}"
 
-# Fail fast if no database URL is available
-if not db_url:
-    raise ValueError(
-        "Database configuration error: "
-        "Either DATABASE_URL or DB_HOST+DB_NAME environment variables must be set. "
-        "For Azure, use DATABASE_URL from the connection string."
-    )
-
-DATABASES = {
-    "default": dj_database_url.config(
-        default=db_url,
-        conn_max_age=600,
-        ssl_require=True,  # Required for Azure Database for PostgreSQL
-    )
-}
+# Configure database
+if db_url:
+    # PostgreSQL database (Azure or local PostgreSQL)
+    # SSL is required for Azure, optional for local PostgreSQL
+    ssl_require = IS_AZURE  # Only require SSL on Azure
+    
+    DATABASES = {
+        "default": dj_database_url.config(
+            default=db_url,
+            conn_max_age=600,
+            ssl_require=ssl_require,
+        )
+    }
+    
+    # For local PostgreSQL, if SSL fails, try without SSL requirement
+    if not IS_AZURE:
+        # Override sslmode in the database config for local development
+        # This allows local PostgreSQL databases without SSL certificates
+        if "OPTIONS" not in DATABASES["default"]:
+            DATABASES["default"]["OPTIONS"] = {}
+        # Only set sslmode if not already set
+        if "sslmode" not in DATABASES["default"]["OPTIONS"]:
+            DATABASES["default"]["OPTIONS"]["sslmode"] = "prefer"  # prefer SSL but don't require
+else:
+    # No database URL found - use SQLite for local development
+    if IS_AZURE:
+        # On Azure, we must have a database configured
+        raise ValueError(
+            "Database configuration error: "
+            "Either DATABASE_URL or DB_HOST+DB_NAME environment variables must be set. "
+            "For Azure, use DATABASE_URL from the connection string."
+        )
+    else:
+        # Local development: fall back to SQLite
+        DATABASES = {
+            "default": {
+                "ENGINE": "django.db.backends.sqlite3",
+                "NAME": BASE_DIR / "db.sqlite3",
+            }
+        }
+        print("⚠️  WARNING: No database configuration found. Using SQLite for local development.")
+        print("   To use PostgreSQL locally, set DATABASE_URL or DB_HOST+DB_NAME environment variables.")
 
 # Read SECRET_KEY from environment variable
 # For local dev, it's okay to have a fallback, but document that it must be overridden in production
 SECRET_KEY = os.environ.get("SECRET_KEY", "insecure-default-change-me")
 
 # Read DEBUG from environment variable
-DEBUG = os.environ.get("DEBUG", "False").lower() == "true"
+# Default: True for local development, False for Azure (production)
+DEBUG = os.environ.get("DEBUG", "True" if not IS_AZURE else "False").lower() == "true"
 
 # Read ALLOWED_HOSTS from environment variable
-# Default includes localhost and Azure health probe IP
-default_hosts = "localhost,127.0.0.1,169.254.130.3"
-allowed_hosts_str = os.environ.get("ALLOWED_HOSTS", default_hosts)
-ALLOWED_HOSTS = [h.strip() for h in allowed_hosts_str.split(",") if h.strip()]
-
-# Add Azure website hostname if available (Azure sets WEBSITE_HOSTNAME)
-azure_hostname = os.environ.get("WEBSITE_HOSTNAME")
-if azure_hostname and azure_hostname not in ALLOWED_HOSTS:
-    ALLOWED_HOSTS.append(azure_hostname)
-    # Also add the plain hostname without region suffix if it exists
-    if ".azurewebsites.net" in azure_hostname:
-        plain_hostname = azure_hostname.split(".")[0] + ".azurewebsites.net"
-        if plain_hostname not in ALLOWED_HOSTS:
-            ALLOWED_HOSTS.append(plain_hostname)
+if IS_AZURE:
+    # Azure: Default includes localhost and Azure health probe IP
+    default_hosts = "localhost,127.0.0.1,169.254.130.3"
+    allowed_hosts_str = os.environ.get("ALLOWED_HOSTS", default_hosts)
+    ALLOWED_HOSTS = [h.strip() for h in allowed_hosts_str.split(",") if h.strip()]
+    
+    # Add Azure website hostname if available (Azure sets WEBSITE_HOSTNAME)
+    azure_hostname = os.environ.get("WEBSITE_HOSTNAME")
+    if azure_hostname and azure_hostname not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(azure_hostname)
+        # Also add the plain hostname without region suffix if it exists
+        if ".azurewebsites.net" in azure_hostname:
+            plain_hostname = azure_hostname.split(".")[0] + ".azurewebsites.net"
+            if plain_hostname not in ALLOWED_HOSTS:
+                ALLOWED_HOSTS.append(plain_hostname)
+else:
+    # Local development: Allow all hosts when DEBUG is True, otherwise use environment variable
+    if DEBUG:
+        ALLOWED_HOSTS = ["*"]  # Allow all hosts in local development
+    else:
+        default_hosts = "localhost,127.0.0.1"
+        allowed_hosts_str = os.environ.get("ALLOWED_HOSTS", default_hosts)
+        ALLOWED_HOSTS = [h.strip() for h in allowed_hosts_str.split(",") if h.strip()]
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -164,7 +205,14 @@ USE_TZ = True
 
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / "staticfiles"
-STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
+
+# Static files storage
+# Use WhiteNoise for production (Azure), Django's default for local development
+if IS_AZURE:
+    STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
+else:
+    # Local development: use default storage (no compression/manifest needed)
+    STATICFILES_STORAGE = "django.contrib.staticfiles.storage.StaticFilesStorage"
 
 #media files
 MEDIA_URL = "/media/"
@@ -176,16 +224,26 @@ DATE_FORMAT = 'd-m-Y'
 DATETIME_FORMAT = 'd-m-Y H:i'
 
 # CORS configuration
-# Read CORS_ALLOWED_ORIGINS from environment variable (comma-separated)
-cors_origins = os.environ.get("CORS_ALLOWED_ORIGINS")
-if cors_origins:
-    CORS_ALLOWED_ORIGINS = [o.strip() for o in cors_origins.split(",") if o.strip()]
+# For local development with DEBUG=True, allow all origins (useful for development)
+if DEBUG and not IS_AZURE:
+    CORS_ALLOW_ALL_ORIGINS = True
+    CORS_ALLOWED_ORIGINS = []  # Not used when CORS_ALLOW_ALL_ORIGINS is True
 else:
-    CORS_ALLOWED_ORIGINS = [
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "https://pharmafrontend.z29.web.core.windows.net",
-    ]
+    # Read CORS_ALLOWED_ORIGINS from environment variable (comma-separated)
+    cors_origins = os.environ.get("CORS_ALLOWED_ORIGINS")
+    if cors_origins:
+        CORS_ALLOWED_ORIGINS = [o.strip() for o in cors_origins.split(",") if o.strip()]
+    else:
+        # Default CORS origins
+        CORS_ALLOWED_ORIGINS = [
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+            "http://localhost:5173",  # Vite default port
+            "http://127.0.0.1:5173",
+        ]
+        # Add Azure frontend URL if on Azure
+        if IS_AZURE:
+            CORS_ALLOWED_ORIGINS.append("https://pharmafrontend.z29.web.core.windows.net")
 
 # CSRF configuration
 # Read CSRF_TRUSTED_ORIGINS from environment variable (comma-separated)
@@ -193,9 +251,19 @@ csrf_origins = os.environ.get("CSRF_TRUSTED_ORIGINS")
 if csrf_origins:
     CSRF_TRUSTED_ORIGINS = [o.strip() for o in csrf_origins.split(",") if o.strip()]
 else:
-    CSRF_TRUSTED_ORIGINS = [
-        "https://pharmafrontend.z29.web.core.windows.net",
-    ]
+    # Default CSRF trusted origins
+    CSRF_TRUSTED_ORIGINS = []
+    # Add Azure frontend URL if on Azure
+    if IS_AZURE:
+        CSRF_TRUSTED_ORIGINS.append("https://pharmafrontend.z29.web.core.windows.net")
+    # For local development, add common localhost URLs
+    if not IS_AZURE:
+        CSRF_TRUSTED_ORIGINS.extend([
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+        ])
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [

@@ -3,7 +3,7 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     HealthView, SettingsListCreateView, SettingsDetailView, BusinessProfileView,
     SettingsGroupView, SettingsGroupSaveView, DocCounterViewSet, KVDetailView, DocCounterNextView,
-    PaymentMethodViewSet, PaymentTermViewSet, BackupRestoreView, BackupCreateView,
+    PaymentMethodViewSet, BackupRestoreView, BackupCreateView,
     NotificationSettingsView, TaxBillingSettingsView, AlertThresholdsView, NotificationTestView,
 )
 
@@ -11,7 +11,6 @@ from .views import (
 router = DefaultRouter()
 router.register(r'counters', DocCounterViewSet)
 router.register(r'payment-methods', PaymentMethodViewSet)
-router.register(r'payment-terms', PaymentTermViewSet)
 
 urlpatterns = [
     path('', HealthView.as_view(), name='settings-root'),

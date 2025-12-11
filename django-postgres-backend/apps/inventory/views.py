@@ -369,6 +369,7 @@ class MedicineViewMixin:
         product.name = payload["name"]
         product.generic_name = payload.get("generic_name") or ""
         product.dosage_strength = payload.get("strength") or ""
+        product.hsn = payload.get("hsn_code") or payload.get("hsn") or ""
         product.category = payload.get("category")
         product.medicine_form = payload.get("medicine_form")
         # UOMs are optional - will be inferred if not provided
@@ -535,6 +536,7 @@ class MedicineViewMixin:
             "selling_uom": self._ref(product.selling_uom) or {"id": 0, "name": ""},
             "rack_location": self._ref(product.rack_location) or {"id": 0, "name": ""},
             "gst_percent": str(product.gst_percent or Decimal("0")),
+            "hsn": product.hsn or "",
             "description": product.description or "",
             "storage_instructions": product.storage_instructions or "",
             # Tablet/Capsule packaging
@@ -935,6 +937,8 @@ class MedicinesListView(APIView):
                 "batch_lot__product__code",
                 "batch_lot__product__name",
                 "batch_lot__product__manufacturer",
+                "batch_lot__product__dosage_strength",
+                "batch_lot__product__hsn",
                 "batch_lot__product__category_id",
                 "batch_lot__product__mrp",
             )
@@ -982,6 +986,8 @@ class MedicinesListView(APIView):
                 "medicine_id": r.get("batch_lot__product__code") or "",
                 "batch_number": r.get("batch_lot__batch_no") or "",
                 "medicine_name": r.get("batch_lot__product__name") or "",
+                "strength": r.get("batch_lot__product__dosage_strength") or "",
+                "hsn_code": r.get("batch_lot__product__hsn") or "",
                 "category": cat_map.get(r.get("batch_lot__product__category_id")) or "",
                 "manufacturer": r.get("batch_lot__product__manufacturer") or "",
                 "quantity": float(qty),

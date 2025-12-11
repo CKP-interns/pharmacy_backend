@@ -72,6 +72,7 @@ class MedicinePayloadSerializer(serializers.Serializer):
     category = serializers.CharField(max_length=120)  # Accept string category name or ID
     form = serializers.PrimaryKeyRelatedField(queryset=MedicineForm.objects.all(), source="medicine_form", required=False)
     strength = serializers.CharField(max_length=64, required=False, allow_blank=True)
+    hsn_code = serializers.CharField(max_length=32, required=False, allow_blank=True)
     base_uom = serializers.PrimaryKeyRelatedField(queryset=Uom.objects.all(), required=False)
     selling_uom = serializers.PrimaryKeyRelatedField(queryset=Uom.objects.all(), required=False)
     rack_location = serializers.PrimaryKeyRelatedField(queryset=RackLocation.objects.all(), required=False)
@@ -548,6 +549,7 @@ class MedicineResponseSerializer(serializers.Serializer):
     name = serializers.CharField()
     generic_name = serializers.CharField(required=False, allow_blank=True)
     strength = serializers.CharField(required=False, allow_blank=True)
+    hsn = serializers.CharField(required=False, allow_blank=True)
     category = MasterRefSerializer()
     form = MasterRefSerializer()
     base_uom = MasterRefSerializer()
