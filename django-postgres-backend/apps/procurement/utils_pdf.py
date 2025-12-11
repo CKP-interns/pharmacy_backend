@@ -173,3 +173,4 @@ def extract_purchase_items_from_pdf(path: str):
             })
 
     return items
+

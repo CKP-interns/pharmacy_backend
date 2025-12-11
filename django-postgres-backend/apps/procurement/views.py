@@ -32,7 +32,7 @@ from django.db.models import Sum
 import os
 from django.core.files.storage import default_storage
 from .models import Purchase, PurchaseLine
-from apps.catalog.models import Product, BatchLot
+from apps.catalog.models import Product
 from apps.procurement.utils_pdf import extract_purchase_items_from_pdf
 from django.conf import settings
 from django.shortcuts import get_object_or_404
@@ -578,7 +578,7 @@ class PurchasesMonthlyStatsView(APIView):
 logger = logging.getLogger(__name__)
 
 
-class PurchasePDFImportView(APIView):
+class PurchaseImportView(APIView):
 
     def post(self, request):
         file = request.FILES.get("file")
@@ -588,23 +588,39 @@ class PurchasePDFImportView(APIView):
         po_number = next_doc_number("PO")
 
         if not file:
-            return Response({"detail": "file is required"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": "file is required"}, status=400)
+
         if not vendor_id or not location_id:
-            return Response({"detail": "vendor_id and location_id are required"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": "vendor_id and location_id are required"}, status=400)
 
         tmp_path = None
         try:
             vendor = get_object_or_404(Vendor, pk=vendor_id)
             location = get_object_or_404(Location, pk=location_id)
 
-            # TEMP SAVE PDF
-            tmp_path = default_storage.save(f"temp_pdfs/{file.name}", file)
-            tmp_full_path = default_storage.path(tmp_path)
+            # TEMP save file
+            tmp_path = default_storage.save(f"temp_import/{file.name}", file)
+            tmp_file_path = default_storage.path(tmp_path)
 
-            # PDF PARSE
-            items = extract_purchase_items_from_pdf(tmp_full_path)
+            # Detect file type
+            ext = file.name.lower().split(".")[-1]
+
+            if ext == "pdf":
+                items = extract_purchase_items_from_pdf(tmp_file_path)
+
+            elif ext == "csv":
+                from .utils import extract_items_from_csv
+                items = extract_items_from_csv(tmp_file_path)
+
+            elif ext in ["xlsx", "xls"]:
+                from .utils import extract_items_from_excel
+                items = extract_items_from_excel(tmp_file_path)
+
+            else:
+                return Response({"detail": "Unsupported file type"}, status=400)
+
             if not items:
-                return Response({"detail": "no items extracted from PDF"}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({"detail": "No items found in file"}, status=400)
 
             created_lines = 0
             total_amount = Decimal("0.00")
@@ -624,93 +640,67 @@ class PurchasePDFImportView(APIView):
                     code = (it.get("product_code") or "").strip()
                     name = (it.get("name") or "").strip()
 
-                    # -----------------------------------------
-                    # PRODUCT LOOKUP (allowed, but NOT creation)
-                    # -----------------------------------------
+                    # PRODUCT LOOKUP ONLY
                     product = None
-
                     if code:
                         product = Product.objects.filter(code__iexact=code).first()
-
                     if not product and name:
                         product = Product.objects.filter(name__iexact=name).first()
-
                     if not product and name:
                         product = Product.objects.filter(name__icontains=name).first()
 
-                    if not product and name:
-                        first_token = name.split()[0]
-                        product = Product.objects.filter(name__icontains=first_token).first()
-
-                    # -----------------------------------------
-                    # PRODUCT CREATION REMOVED COMPLETELY
-                    # product stays None
-                    # -----------------------------------------
-
-                    # -----------------------------------------
-                    # PARSE NUMERIC FIELDS
-                    # -----------------------------------------
-                    qty_raw = it.get("qty") or 0
-                    rate_raw = it.get("rate") or 0
-                    net_value_raw = it.get("net_value") or 0
+                    # PARSE FIELDS
+                    qty_raw = it.get("qty") or "0"
+                    rate_raw = it.get("rate") or "0"
+                    net_raw = it.get("net_value") or "0"
 
                     try:
-                        qty_packs = int(float(qty_raw))
+                        qty = int(float(qty_raw))
                     except:
-                        qty_packs = 0
+                        qty = 0
 
                     try:
-                        expected_unit_cost = Decimal(str(rate_raw))
+                        rate = Decimal(str(rate_raw))
                     except:
-                        expected_unit_cost = Decimal("0.00")
+                        rate = Decimal("0.00")
 
                     try:
-                        net_value = Decimal(str(net_value_raw))
+                        net_value = Decimal(str(net_raw))
                     except:
-                        net_value = expected_unit_cost * qty_packs
+                        net_value = rate * qty
 
-                    # -----------------------------------------
-                    # CREATE PO LINE
-                    # -----------------------------------------
+                    # Create line
                     PurchaseOrderLine.objects.create(
                         po=po,
                         requested_name=name or (product.name if product else ""),
-                        qty_packs_ordered=qty_packs,
-                        expected_unit_cost=expected_unit_cost,
+                        qty_packs_ordered=qty,
+                        expected_unit_cost=rate,
                         gst_percent_override=None
                     )
 
                     total_amount += net_value
                     created_lines += 1
 
-                # -----------------------------------------
-                # UPDATE TOTALS
-                # -----------------------------------------
+                # Update total
                 po.net_total = total_amount
                 po.save()
 
-                # auto-receive placeholder
-                if auto_receive and created_lines:
-                    logger.info("auto_receive requested but not implemented.")
-
             return Response({
-                "message": "imported",
+                "message": "Imported successfully",
                 "purchase_order_id": po.id,
                 "po_number": po.po_number,
                 "lines_created": created_lines,
-                "net_total": str(po.net_total),
-            }, status=status.HTTP_201_CREATED)
+                "net_total": str(po.net_total)
+            }, status=201)
 
         except Exception as exc:
-            logger.exception("Error importing purchase PDF: %s", exc)
-            return Response({
-                "detail": "error importing PDF",
-                "error": str(exc)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            logger.exception("Error importing file: %s", exc)
+            return Response({"detail": "Import error", "error": str(exc)}, status=500)
 
         finally:
             if tmp_path and default_storage.exists(tmp_path):
                 default_storage.delete(tmp_path)
+
 
 
 
