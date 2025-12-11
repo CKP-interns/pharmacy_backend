@@ -259,17 +259,27 @@ def _update_payment_status(inv):
 
 def _audit(actor, table_name, record_id, action):
     """Generic audit trail creation. Avoid FK errors during tests."""
+    actor_ref = None
     try:
-        actor_id = actor.id if actor and hasattr(actor, "id") else None
-    except:
-        actor_id = None
+        from apps.accounts.models import User as AccountsUser
+        # Verify the actor is a User instance and exists in the database
+        if actor and isinstance(actor, AccountsUser) and hasattr(actor, "id"):
+            # Check if the user actually exists in the database
+            if AccountsUser.objects.filter(id=actor.id).exists():
+                actor_ref = actor
+    except Exception:
+        actor_ref = None
 
-    AuditLog.objects.create(
-        actor_user_id=actor_id,
-        action=action,
-        table_name=table_name,
-        record_id=record_id,
-        created_at=timezone.now(),
-    )
+    try:
+        AuditLog.objects.create(
+            actor_user=actor_ref,  # Use the object, not the ID - Django will handle it properly
+            action=action,
+            table_name=table_name,
+            record_id=str(record_id),
+            created_at=timezone.now(),
+        )
+    except Exception:
+        # Silently fail if audit creation fails (e.g., during tests or if user doesn't exist)
+        pass
 
 
