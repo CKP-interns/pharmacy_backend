@@ -14,7 +14,7 @@ from .models import SalesInvoice, SalesPayment
 from .serializers import SalesInvoiceSerializer, SalesPaymentSerializer
 from . import services
 from apps.settingsx.services import next_doc_number
-from apps.settingsx.models import TaxBillingSettings, DocCounter
+from apps.settingsx.models import TaxBillingSettings, DocCounter, DeletedInvoiceNumber
 from apps.inventory.models import InventoryMovement
 from apps.catalog.models import Product, BatchLot
 from core.permissions import HasActiveSystemLicense
@@ -31,26 +31,146 @@ class SalesInvoiceViewSet(viewsets.ModelViewSet):
     search_fields = ["invoice_no", "customer__name"]
 
     def perform_create(self, serializer):
+        # Check if user wants to reuse deleted invoice number
+        reuse_deleted = self.request.data.get('reuse_deleted_invoice_number', False)
+        deleted_invoice_no = None
+        
+        deleted_invoice_date = None
+        if reuse_deleted:
+            # Get the last deleted invoice number (only one record exists)
+            last_deleted = DeletedInvoiceNumber.objects.filter(is_reused=False).first()
+            if last_deleted:
+                deleted_invoice_no = last_deleted.invoice_no
+                # Try to get original_invoice_date
+                deleted_invoice_date = getattr(last_deleted, 'original_invoice_date', None)
+                # Mark it as reused
+                last_deleted.is_reused = True
+                last_deleted.save(update_fields=['is_reused'])
+        
         # create with created_by then ensure invoice_no is generated if not provided
         invoice = serializer.save(created_by=self.request.user)
+        
         if not invoice.invoice_no:
-            # Ensure DocCounter exists and aligns with TaxBillingSettings
-            settings = TaxBillingSettings.objects.first()
-            prefix = (settings.invoice_prefix or "INV-") if settings else "INV-"
-            start_num = (settings.invoice_start or 1) if settings else 1
-            padding = 4
-            DocCounter.objects.get_or_create(
-                document_type="INVOICE",
-                defaults={"prefix": prefix, "next_number": start_num, "padding_int": padding},
-            )
-            invoice.invoice_no = next_doc_number("INVOICE", prefix=prefix, padding=padding)
-            invoice.save(update_fields=["invoice_no"])
+            if deleted_invoice_no:
+                # Use the deleted invoice number and restore original date
+                update_fields = ["invoice_no"]
+                invoice.invoice_no = deleted_invoice_no
+                if deleted_invoice_date:
+                    invoice.invoice_date = deleted_invoice_date
+                    update_fields.append("invoice_date")
+                invoice.save(update_fields=update_fields)
+            else:
+                # Generate new invoice number normally
+                settings = TaxBillingSettings.objects.first()
+                prefix = (settings.invoice_prefix or "INV-") if settings else "INV-"
+                start_num = (settings.invoice_start or 1) if settings else 1
+                padding = 4
+                DocCounter.objects.get_or_create(
+                    document_type="INVOICE",
+                    defaults={"prefix": prefix, "next_number": start_num, "padding_int": padding},
+                )
+                invoice.invoice_no = next_doc_number("INVOICE", prefix=prefix, padding=padding)
+                invoice.save(update_fields=["invoice_no"])
 
     def destroy(self, request, *args, **kwargs):
-        obj = self.get_object()
-        if obj.status == SalesInvoice.Status.POSTED:
-            return Response({"detail": "Cannot delete a POSTED invoice. Cancel instead."}, status=status.HTTP_400_BAD_REQUEST)
-        return super().destroy(request, *args, **kwargs)
+        try:
+            # Get invoice ID first
+            invoice_id = kwargs.get('pk')
+            
+            # Check if user wants to restore stock (only relevant for POSTED invoices)
+            # Use query parameter since DELETE requests typically don't have body
+            restore_stock = request.query_params.get('restore_stock', 'false').lower() == 'true'
+            
+            # Do everything in a single transaction to ensure atomicity
+            with transaction.atomic():
+                # Refetch invoice with lock in transaction
+                try:
+                    inv = SalesInvoice.objects.select_for_update().prefetch_related('lines').get(pk=invoice_id)
+                except SalesInvoice.DoesNotExist:
+                    return Response({"detail": "Invoice not found"}, status=status.HTTP_404_NOT_FOUND)
+                
+                # Get invoice number and date before deletion
+                invoice_no = inv.invoice_no
+                original_invoice_date = inv.invoice_date
+                is_posted = inv.status == SalesInvoice.Status.POSTED
+                
+                # If invoice is POSTED, we need to restore stock if requested
+                if is_posted and restore_stock:
+                    try:
+                        from apps.sales.services import write_movement
+                        from decimal import Decimal
+                        # Reverse stock (credit back) for each line
+                        for line in inv.lines.all():
+                            write_movement(
+                                inv.location_id,
+                                line.batch_lot_id,
+                                Decimal(line.qty_base),
+                                "ADJUSTMENT",
+                                "SalesInvoiceDelete",
+                                inv.id,
+                            )
+                    except Exception as e:
+                        import logging
+                        logger = logging.getLogger(__name__)
+                        logger.error(f"Failed to restore stock for invoice {invoice_id}: {str(e)}", exc_info=True)
+                        return Response({"detail": f"Failed to restore stock: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+                
+                # Delete the invoice (this will cascade to lines and payments via CASCADE)
+                inv.delete()
+                
+                # Save deleted invoice number for potential reuse - always overwrite the last one
+                if invoice_no:
+                    # Convert request.user to accounts.User if needed
+                    deleted_by_user = None
+                    if request.user and request.user.is_authenticated:
+                        try:
+                            from apps.accounts.models import User as AccountsUser
+                            # Try to get accounts.User by email or ID
+                            if hasattr(request.user, 'email'):
+                                deleted_by_user = AccountsUser.objects.filter(email=request.user.email).first()
+                            if not deleted_by_user and hasattr(request.user, 'id'):
+                                deleted_by_user = AccountsUser.objects.filter(id=request.user.id).first()
+                        except Exception:
+                            deleted_by_user = None
+                    
+                    # Update or create - always keep only one record (overwrite)
+                    # Delete all existing records first, then create new one
+                    DeletedInvoiceNumber.objects.all().delete()
+                    
+                    try:
+                        DeletedInvoiceNumber.objects.create(
+                            invoice_no=invoice_no,
+                            deleted_by=deleted_by_user,
+                            original_invoice_date=original_invoice_date,
+                            is_reused=False
+                        )
+                    except Exception as e:
+                        # Fallback if original_invoice_date column doesn't exist yet
+                        import logging
+                        logger = logging.getLogger(__name__)
+                        logger.warning(f"Could not save original_invoice_date, column may not exist: {e}")
+                        # Just create without original_invoice_date
+                        DeletedInvoiceNumber.objects.create(
+                            invoice_no=invoice_no,
+                            deleted_by=deleted_by_user,
+                            is_reused=False
+                        )
+            
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error deleting invoice {kwargs.get('pk')}: {str(e)}", exc_info=True)
+            return Response({"detail": f"Failed to delete invoice: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=False, methods=["get"], url_path="last-deleted-invoice")
+    def last_deleted_invoice(self, request):
+        """Get the last deleted invoice number if available (only non-reused ones)."""
+        # Since we only store one record, just get the first non-reused one
+        last_deleted = DeletedInvoiceNumber.objects.filter(is_reused=False).first()
+        if last_deleted:
+            return Response({"invoice_no": last_deleted.invoice_no})
+        return Response({"invoice_no": None})
 
     @action(detail=True, methods=["post"], url_path="post")
     def post_invoice(self, request, pk=None):

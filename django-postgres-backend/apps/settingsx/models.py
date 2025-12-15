@@ -123,3 +123,20 @@ class AlertThresholds(models.Model):
     low_stock_default = models.PositiveIntegerField(default=50)
     updated_at = models.DateTimeField(auto_now=True)
 
+
+class DeletedInvoiceNumber(models.Model):
+    """Store deleted invoice numbers so they can be reused later."""
+    invoice_no = models.CharField(max_length=64)  # Removed unique=True to allow duplicates
+    original_invoice_date = models.DateTimeField(null=True, blank=True, help_text="Original invoice date to preserve chronological order")
+    is_reused = models.BooleanField(default=False, help_text="Mark as True when this invoice number is reused")
+    deleted_at = models.DateTimeField(auto_now_add=True)
+    deleted_by = models.ForeignKey('accounts.User', on_delete=models.SET_NULL, null=True, blank=True)
+
+    class Meta:
+        ordering = ['-deleted_at']
+        indexes = [
+            models.Index(fields=['-deleted_at']),
+        ]
+
+    def __str__(self) -> str:
+        return self.invoice_no

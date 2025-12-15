@@ -232,6 +232,27 @@ def cancel_invoice(actor, invoice_id):
     return {"invoice_no": inv.invoice_no, "status": inv.status}
 
 
+@transaction.atomic
+def restore_stock_for_invoice(invoice_id):
+    """Restore stock for a posted invoice (used when deleting invoice)."""
+    inv = SalesInvoice.objects.select_for_update().get(pk=invoice_id)
+    
+    # Only restore stock if invoice was posted (stock was deducted)
+    if inv.status == SalesInvoice.Status.POSTED:
+        # Reverse stock (credit back) - same logic as cancel_invoice
+        for line in inv.lines.all():
+            write_movement(
+                inv.location_id,
+                line.batch_lot_id,
+                Decimal(line.qty_base),
+                "ADJUSTMENT",
+                "SalesInvoiceDelete",
+                inv.id,
+            )
+    
+    return inv
+
+
 def _update_payment_status(inv):
     """Recalculate invoice payment status and persist totals."""
     # refresh relations to read fresh payments
