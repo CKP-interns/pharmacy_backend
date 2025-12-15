@@ -191,33 +191,87 @@ class VendorViewSet(viewsets.ModelViewSet):
 
     def destroy(self, request, *args, **kwargs):
         """
-        Custom destroy method to handle ProtectedError when vendor has related records.
+        Custom destroy method to delete vendor and all related records (cascade delete).
+        Deletes: VendorReturns, PurchaseOrders (and their lines, GRNs), Purchases (and their lines).
         """
-        instance = self.get_object()
-        
-        # Check for related records
-        has_purchases = Purchase.objects.filter(vendor=instance).exists()
-        has_purchase_orders = PurchaseOrder.objects.filter(vendor=instance).exists()
-        has_vendor_returns = VendorReturn.objects.filter(vendor=instance).exists()
-        
-        if has_purchases or has_purchase_orders or has_vendor_returns:
-            related_items = []
-            if has_purchases:
-                count = Purchase.objects.filter(vendor=instance).count()
-                related_items.append(f"{count} purchase(s)")
-            if has_purchase_orders:
-                count = PurchaseOrder.objects.filter(vendor=instance).count()
-                related_items.append(f"{count} purchase order(s)")
-            if has_vendor_returns:
-                count = VendorReturn.objects.filter(vendor=instance).count()
-                related_items.append(f"{count} vendor return(s)")
+        try:
+            instance = self.get_object()
+            
+            # Use transaction to ensure atomicity
+            with transaction.atomic():
+                # Count related records for logging/response
+                vendor_returns_count = VendorReturn.objects.filter(vendor=instance).count()
+                purchase_orders_count = PurchaseOrder.objects.filter(vendor=instance).count()
+                purchases_count = Purchase.objects.filter(vendor=instance).count()
+                
+                deleted_counts = []
+                
+                # 1. Delete VendorReturns first (they reference PurchaseLine which we'll delete later, but PROTECT prevents it)
+                if vendor_returns_count > 0:
+                    VendorReturn.objects.filter(vendor=instance).delete()
+                    deleted_counts.append(f"{vendor_returns_count} vendor return(s)")
+                
+                # 2. Delete PurchaseOrders and related records
+                # Note: GoodsReceipt references PurchaseOrder with PROTECT
+                # GoodsReceiptLine references PurchaseOrderLine with PROTECT
+                # So we need to delete in this order: GoodsReceiptLines -> GoodsReceipts -> PurchaseOrderLines -> PurchaseOrders
+                if purchase_orders_count > 0:
+                    # Get all PO IDs before deletion
+                    po_ids = list(PurchaseOrder.objects.filter(vendor=instance).values_list('id', flat=True))
+                    
+                    # Get all PurchaseOrderLine IDs for these POs
+                    po_line_ids = list(PurchaseOrderLine.objects.filter(po_id__in=po_ids).values_list('id', flat=True))
+                    
+                    # Delete GoodsReceiptLines that reference these PurchaseOrderLines (PROTECT constraint)
+                    grn_line_count = GoodsReceiptLine.objects.filter(po_line_id__in=po_line_ids).count()
+                    if grn_line_count > 0:
+                        GoodsReceiptLine.objects.filter(po_line_id__in=po_line_ids).delete()
+                    
+                    # Delete GoodsReceipts that reference these PurchaseOrders (PROTECT constraint)
+                    grn_count = GoodsReceipt.objects.filter(po_id__in=po_ids).count()
+                    if grn_count > 0:
+                        GoodsReceipt.objects.filter(po_id__in=po_ids).delete()
+                    
+                    # Now delete PurchaseOrders (cascades to PurchaseOrderLines via CASCADE)
+                    PurchaseOrder.objects.filter(vendor=instance).delete()
+                    deleted_counts.append(f"{purchase_orders_count} purchase order(s)")
+                    if grn_count > 0:
+                        deleted_counts.append(f"{grn_count} goods receipt(s)")
+                    if grn_line_count > 0:
+                        deleted_counts.append(f"{grn_line_count} goods receipt line(s)")
+                
+                # 3. Delete Purchases (this will cascade to PurchaseLines and PurchasePayments via CASCADE)
+                if purchases_count > 0:
+                    Purchase.objects.filter(vendor=instance).delete()
+                    deleted_counts.append(f"{purchases_count} purchase(s)")
+                
+                # 4. Finally, delete the vendor itself
+                instance.delete()
+            
+            # Success response with details of what was deleted
+            message = "Supplier deleted successfully."
+            if deleted_counts:
+                message += f" Also deleted: {', '.join(deleted_counts)}."
             
             return Response({
-                "detail": f"Cannot delete supplier. This supplier has related records: {', '.join(related_items)}. Please delete or reassign these records first."
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
-        # No related records, safe to delete
-        return super().destroy(request, *args, **kwargs)
+                "detail": message
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            # Catch any unexpected errors
+            logger.error(f"Error deleting vendor {kwargs.get('pk')}: {str(e)}", exc_info=True)
+            
+            # Check if it's a ProtectedError (database constraint from other models we didn't handle)
+            error_msg = str(e)
+            if "protected" in error_msg.lower() or "foreign key" in error_msg.lower():
+                return Response({
+                    "detail": f"Cannot delete supplier due to database constraints: {error_msg}. Please check for other related records."
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Generic error
+            return Response({
+                "detail": f"Error deleting supplier: {error_msg}"
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class PurchaseViewSet(viewsets.ModelViewSet):
@@ -356,7 +410,7 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
     def po_lines(self, request, pk=None):
         from .serializers import PurchaseOrderLineSerializer
         if request.method.lower() == 'get':
-            lines = PurchaseOrderLine.objects.filter(po_id=pk)
+            lines = PurchaseOrderLine.objects.filter(po_id=pk).select_related("product")
             return Response(PurchaseOrderLineSerializer(lines, many=True).data)
         # POST create a line
         ser = PurchaseOrderLineSerializer(data=request.data)
@@ -728,19 +782,17 @@ class PurchaseImportView(APIView):
 
                 for it in items:
                     code = (it.get("product_code") or "").strip()
-                    name = (it.get("name") or "").strip()
+                    # ALWAYS use the name from CSV/Excel - this is the item name to display
+                    name = (it.get("name") or "").strip()  # Item name from Excel/CSV
 
-                    # PRODUCT LOOKUP ONLY
+                    # PRODUCT LOOKUP ONLY (for linking, but we'll ALWAYS use requested_name for display)
+                    # Don't do product lookup by name - only by code if provided
                     product = None
                     if code:
                         product = Product.objects.filter(code__iexact=code).first()
-                    if not product and name:
-                        product = Product.objects.filter(name__iexact=name).first()
-                    if not product and name:
-                        product = Product.objects.filter(name__icontains=name).first()
 
-                    # PARSE FIELDS
-                    qty_raw = it.get("qty") or "0"
+                    # PARSE FIELDS from CSV/Excel
+                    qty_raw = it.get("qty") or "0"  # Quantity from Excel/CSV
                     rate_raw = it.get("rate") or "0"
                     net_raw = it.get("net_value") or "0"
 
@@ -759,11 +811,16 @@ class PurchaseImportView(APIView):
                     except:
                         net_value = rate * qty
 
-                    # Create line
+                    # ALWAYS use the name from CSV/Excel as requested_name for display
+                    # Even if we found a product, we still show the CSV item name
+                    requested_name_for_display = name if name else ""
+                    
+                    # Create line - ALWAYS use CSV item name for requested_name
                     PurchaseOrderLine.objects.create(
                         po=po,
-                        requested_name=name or (product.name if product else ""),
-                        qty_packs_ordered=qty,
+                        product=product,  # Link to product if found by code, but display uses requested_name
+                        requested_name=requested_name_for_display,  # ALWAYS use item name from CSV
+                        qty_packs_ordered=qty,  # ALWAYS use quantity from CSV
                         expected_unit_cost=rate,
                         gst_percent_override=None
                     )

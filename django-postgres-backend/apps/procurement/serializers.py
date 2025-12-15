@@ -56,6 +56,7 @@ class VendorReturnSerializer(serializers.ModelSerializer):
 
 class PurchaseOrderLineSerializer(serializers.ModelSerializer):
     category = serializers.CharField(required=False, allow_blank=True)
+    product_name = serializers.SerializerMethodField()
     
     class Meta:
         model = PurchaseOrderLine
@@ -66,6 +67,17 @@ class PurchaseOrderLineSerializer(serializers.ModelSerializer):
             "product": {"required": False, "allow_null": True},
             "medicine_form": {"required": False, "allow_null": True},
         }
+
+    def get_product_name(self, obj):
+        """Return requested_name (item name from Excel/CSV) if available, otherwise product name.
+        For imported items, requested_name contains the exact item name from the file."""
+        # Prioritize requested_name (from Excel/CSV) over product name for display
+        if obj.requested_name:
+            return obj.requested_name
+        # Fallback to product name if no requested_name
+        if obj.product:
+            return obj.product.name
+        return ""
 
     def validate(self, attrs):
         product = attrs.get("product")

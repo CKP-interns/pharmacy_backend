@@ -86,18 +86,26 @@ def extract_items_from_csv(file_content_or_path):
             # Already a string
             lines = file_content_or_path
 
-    # Normalize spacing → convert multiple spaces/tabs into single comma
-    normalized = ",".join(
-        part for part in lines.replace("\t", " ").split(" ") if part.strip() != ""
-    )
-
-    rows = normalized.split("\n")
-
-    if len(rows) < 2:
-        return []
-
-    # Parse header
-    header = rows[0].split(",")
+    # Use Python's csv module to properly parse CSV files
+    # This handles quoted fields, spaces in column names, etc.
+    import csv as csv_module
+    import io
+    
+    # Parse CSV properly
+    try:
+        csv_reader = csv_module.reader(io.StringIO(lines))
+        rows_list = list(csv_reader)
+        if len(rows_list) < 2:
+            return []
+        header = rows_list[0]  # First row is header
+        data_rows = rows_list[1:]  # Rest are data rows
+    except Exception as e:
+        # If CSV parsing fails, try simple comma split as fallback
+        rows = lines.split("\n")
+        if len(rows) < 2:
+            return []
+        header = rows[0].split(",")
+        data_rows = [row.split(",") for row in rows[1:]]
 
     # Build index map safely (case-insensitive)
     idx = {}
@@ -125,21 +133,33 @@ def extract_items_from_csv(file_content_or_path):
         return None
 
     # Find required columns with flexible matching
+    # IMPORTANT: Match "ITEM NAME" (with space) from CSV files like the one provided
+    # Prioritize exact matches for name columns - avoid matching code columns
     name_idx = find_column_index([
-        "ItemName", "itemname", "item_name", "Item Name", "Item", "Product Name", 
-        "ProductName", "product_name", "Name", "Medicine Name", "MedicineName",
-        "medicine name", "medicine_name", "Product", "product"
+        "ITEM NAME", "Item Name", "item name", "item_name", "ItemName", "itemname",
+        "Product Name", "product name", "ProductName", "product_name", 
+        "Name", "NAME", "Medicine Name", "medicine name", "MedicineName"
+        # Note: "Product" and "Item" removed to avoid matching "CODE" column
     ])
+    
+    # Find quantity column - match "QTY" (uppercase) from CSV files
+    # This should match before we try other variations
     qty_idx = find_column_index([
-        "InvQty", "invqty", "inv_qty", "Inv Qty", "Quantity", "Qty", "qty", 
-        "QTY", "quantity", "Qty Pack", "QtyPack", "qty_pack", "qty pack",
+        "QTY", "qty", "Qty", "Quantity", "quantity", "InvQty", "invqty", "Inv Qty", 
+        "Qty Pack", "qty pack", "QtyPack", "qty_pack",
         "Qty Packs", "qty_packs", "QtyPacks"
     ])
+    
+    # Also try to find product code column (but don't use it as name)
+    code_idx = find_column_index([
+        "ProductCode", "productcode", "product_code", "Product Code", 
+        "CODE", "Code", "code", "Item Code", "ItemCode", "item_code"
+    ])
     rate_idx = find_column_index([
-        "SaleRate", "salerate", "sale_rate", "Sale Rate", "Rate", "rate", 
-        "RATE", "Price", "price", "Unit Price", "UnitPrice", "unit_price",
-        "Cost", "cost", "Unit Cost", "UnitCost", "unit_cost", "Sale Price",
-        "sale_price", "SalePrice"
+        "SRATE", "srate", "SaleRate", "salerate", "sale_rate", "Sale Rate", 
+        "Rate", "rate", "RATE", "Price", "price", "Unit Price", "UnitPrice", 
+        "unit_price", "Cost", "cost", "Unit Cost", "UnitCost", "unit_cost", 
+        "Sale Price", "sale_price", "SalePrice"
     ])
 
     # Check if we found required columns
@@ -159,27 +179,29 @@ def extract_items_from_csv(file_content_or_path):
         return []   # cannot parse this CSV
 
     items = []
-    for row in rows[1:]:
-        if not row.strip():
+    for row in data_rows:
+        if not row or len(row) == 0:
             continue
-
-        parts = row.split(",")
 
         try:
             # Get values safely using the found indices
-            name = parts[name_idx].strip().strip('"').strip("'") if name_idx < len(parts) else ""
-            qty = parts[qty_idx].strip().strip('"').strip("'") if qty_idx < len(parts) else "0"
-            rate = parts[rate_idx].strip().strip('"').strip("'") if rate_idx < len(parts) else "0"
-        except (IndexError, AttributeError) as e:
+            # CSV module already handles quotes, so just strip whitespace
+            name = str(row[name_idx]).strip() if name_idx is not None and name_idx < len(row) else ""
+            qty = str(row[qty_idx]).strip() if qty_idx is not None and qty_idx < len(row) else "0"
+            rate = str(row[rate_idx]).strip() if rate_idx is not None and rate_idx < len(row) else "0"
+            # Extract product code if available (but don't use it as name)
+            code = str(row[code_idx]).strip() if code_idx is not None and code_idx < len(row) else ""
+        except (IndexError, AttributeError, TypeError) as e:
             continue
 
-        if name == "":
+        # Skip if no item name found
+        if not name or name == "":
             continue
 
         items.append({
-            "product_code": "",
-            "name": name,
-            "qty": qty,
+            "product_code": code,  # Include code if found, but name takes precedence for display
+            "name": name,  # This is the item name from CSV (e.g., "ITEM NAME" column) - MUST be used for display
+            "qty": qty,  # This is the quantity from CSV (e.g., "QTY" column)
             "rate": rate,
             "net_value": "0",
         })
