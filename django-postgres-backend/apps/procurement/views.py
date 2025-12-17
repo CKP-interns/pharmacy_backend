@@ -48,7 +48,7 @@ class HealthView(APIView):
 
 
 class VendorViewSet(viewsets.ModelViewSet):
-    queryset = Vendor.objects.filter(is_active=True).order_by("name")
+    queryset = Vendor.objects.all().order_by("name")
     serializer_class = VendorSerializer
 
     # -----------------------------

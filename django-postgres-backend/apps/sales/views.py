@@ -96,24 +96,8 @@ class SalesInvoiceViewSet(viewsets.ModelViewSet):
                 
                 # If invoice is POSTED, we need to restore stock if requested
                 if is_posted and restore_stock:
-                    try:
-                        from apps.sales.services import write_movement
-                        from decimal import Decimal
-                        # Reverse stock (credit back) for each line
-                        for line in inv.lines.all():
-                            write_movement(
-                                inv.location_id,
-                                line.batch_lot_id,
-                                Decimal(line.qty_base),
-                                "ADJUSTMENT",
-                                "SalesInvoiceDelete",
-                                inv.id,
-                            )
-                    except Exception as e:
-                        import logging
-                        logger = logging.getLogger(__name__)
-                        logger.error(f"Failed to restore stock for invoice {invoice_id}: {str(e)}", exc_info=True)
-                        return Response({"detail": f"Failed to restore stock: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+                    from apps.sales.services import restore_stock_for_invoice
+                    restore_stock_for_invoice(invoice_id)
                 
                 # Delete the invoice (this will cascade to lines and payments via CASCADE)
                 inv.delete()
